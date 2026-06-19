@@ -1,0 +1,31 @@
+name: Run Screener
+
+on:
+  schedule:
+    # Nightly at 21:00 UTC. GitHub cron is UTC-only (no named tz), so this lands
+    # at 23:00 Israel in winter (UTC+2) and 00:00 in summer (UTC+3) — a ±1h DST
+    # drift we accept. (Was '0 21 * * 0' = Sundays only, which made data weekly.)
+    - cron: '0 21 * * *'
+  workflow_dispatch:         # manual trigger from GitHub UI
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run pipeline
+        run: python pipeline.py
+        env:
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
