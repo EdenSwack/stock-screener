@@ -104,6 +104,7 @@ def _apply_screeners(stocks: list[dict]) -> dict[str, list[dict]]:
         record = {f: stock.get(f) for f in _OUTPUT_FIELDS}
         record["screeners"] = qualified
         record["partial_data"] = any_partial
+        record["quality_score"] = screeners.quality_score(stock)  # absolute, cross-screener
         # One independent copy per bucket — scoring is per-screener (min-max within
         # the set), so a shared object would let the last bucket overwrite the rest.
         for key in qualified:

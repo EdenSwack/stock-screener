@@ -28,7 +28,7 @@ SCREENER_FILTERS = {
         ("peg", lambda v: 0.5 <= v <= 1.0, "PEG 0.5–1"),
         ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
-        ("ev_ebitda", lambda v: 20 <= v <= 31, "EV/EBITDA 20–31"),
+        ("ev_ebitda", lambda v: 0 < v <= 31, "EV/EBITDA ≤31 (positive)"),
         ("fcf_growth", lambda v: v > 0.0, "FCF growth > 0%"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
@@ -36,7 +36,7 @@ SCREENER_FILTERS = {
         ("peg", lambda v: 0.5 <= v <= 1.0, "PEG 0.5–1"),
         ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
-        ("ev_ebitda", lambda v: 20 <= v <= 31, "EV/EBITDA 20–31"),
+        ("ev_ebitda", lambda v: 0 < v <= 31, "EV/EBITDA ≤31 (positive)"),
         ("fcf_growth", lambda v: v > 0.0, "FCF growth > 0%"),
         ("pb", lambda v: v < 9, "P/B < 9"),
         ("beta", lambda v: 0 <= v <= 1.5, "Beta 0–1.5"),
@@ -49,7 +49,7 @@ SCREENER_FILTERS = {
         ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
         ("pb", lambda v: v < 1.0, "P/B < 1"),
-        ("ev_ebitda", lambda v: v < 9, "EV/EBITDA < 9"),
+        ("ev_ebitda", lambda v: 0 < v < 9, "EV/EBITDA <9 (positive)"),
         ("roe", lambda v: v > 0.14, "ROE > 14%"),
         ("ps", lambda v: v < 2.0, "P/S < 2"),
         ("pcf", lambda v: v < 15, "P/CF < 15"),
@@ -78,6 +78,42 @@ def compute_peg(pe, eps_growth) -> float | None:
 
 def count_missing_required(stock: dict) -> int:
     return sum(1 for f in REQUIRED_METRIC_FIELDS if stock.get(f) is None)
+
+
+# ── Absolute quality score ─────────────────────────────────────────────────────
+# Unlike composite_score (min-max normalized WITHIN each screener's nightly set,
+# so only a within-list rank), this scores each factor against FIXED anchors. The
+# result is comparable across every stock and every screener, and stable over time
+# — a stock's quality only moves when its fundamentals move. 0–100.
+#
+# anchor = (lo, hi, inverted): value at/below lo -> 0 (or 100 if inverted), value
+# at/above hi -> 100 (or 0 if inverted), linear in between, clamped.
+QUALITY_ANCHORS = {
+    "revenue_growth": (0.0, 0.40, False),  # 0% -> 0, 40%+ -> 100
+    "eps_growth":     (0.0, 0.40, False),
+    "peg":            (0.5, 2.0, True),    # 0.5 -> 100, 2.0 -> 0 (lower is better)
+    "fcf_growth":     (0.0, 0.30, False),
+    "roe":            (0.0, 0.30, False),
+}
+QUALITY_WEIGHTS = {
+    "revenue_growth": 0.25, "eps_growth": 0.20, "peg": 0.20, "fcf_growth": 0.15, "roe": 0.20,
+}
+
+
+def quality_score(stock: dict) -> float | None:
+    """Fixed-anchor 0–100 quality score (see comment above). Null factors are
+    dropped and their weight redistributed across the present factors."""
+    acc, total_w = 0.0, 0.0
+    for f, w in QUALITY_WEIGHTS.items():
+        v = stock.get(f)
+        if v is None:
+            continue
+        lo, hi, inverted = QUALITY_ANCHORS[f]
+        n = (hi - v) / (hi - lo) if inverted else (v - lo) / (hi - lo)
+        n = max(0.0, min(1.0, n))  # clamp to [0, 1]
+        acc += w * n
+        total_w += w
+    return round(100 * acc / total_w, 1) if total_w else None
 
 
 def evaluate(stock: dict, screener_key: str):
