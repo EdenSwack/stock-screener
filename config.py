@@ -26,17 +26,20 @@ FINNHUB_BASE = "https://finnhub.io/api/v1"
 # Stay under the free-tier 60 calls/min ceiling.
 FINNHUB_RATE_LIMIT_PER_MIN = 55
 
-# ── Universe sources (free static lists) ─────────────────────────────────────
-SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-NASDAQ100_CSV = "https://raw.githubusercontent.com/datasets/nasdaq-100/master/data/constituents.csv"
-# iShares Russell 2000 ETF (IWM) holdings export.
-RUSSELL2000_CSV = (
-    "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
-    "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
-)
+# ── Universe ─────────────────────────────────────────────────────────────────
+# Primary source is Finnhub /stock/symbol (all US-listed names in one call). We
+# keep only common stock on NYSE / NASDAQ; REITs are excluded automatically since
+# Finnhub types them as 'REIT' (not 'Common Stock'). MIC codes from a live probe:
+#   XNAS = NASDAQ · XNYS = NYSE · XASE = NYSE American   (OOTC = OTC, excluded)
+UNIVERSE_TYPE = "Common Stock"
+NYSE_NASDAQ_MICS = {"XNAS", "XNYS", "XASE"}
+MIC_TO_EXCHANGE = {"XNAS": "NASDAQ", "XNYS": "NYSE", "XASE": "NYSE American"}
 
-# ── Pre-filter thresholds (NOT screener filters — purely to cut API calls) ────
-PREFILTER_MIN_MARKET_CAP_MUSD = 200.0   # $200M, expressed in millions
+# Fallback only — if the Finnhub symbol call fails, screen the S&P 500 (degraded).
+SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+
+# ── Filter thresholds (cut the candidate pool; not the screener filters) ──────
+PREFILTER_MIN_MARKET_CAP_MUSD = 300.0   # $300M floor — keep quality small/mid-caps, drop micro junk
 PREFILTER_MIN_AVG_VOLUME = 100_000      # shares/day
 
 # ── Scheduling ───────────────────────────────────────────────────────────────

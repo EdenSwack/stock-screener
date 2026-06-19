@@ -18,7 +18,6 @@ from config import (
     FINNHUB_API_KEY,
     FINNHUB_BASE,
     FINNHUB_RATE_LIMIT_PER_MIN,
-    is_nyse_or_nasdaq,
 )
 
 log = logging.getLogger("screener.finnhub")
@@ -73,6 +72,12 @@ def metric_all(symbol: str) -> dict | None:
     return _get("/stock/metric", {"symbol": symbol, "metric": "all"})
 
 
+def stock_symbols(exchange: str = "US") -> list | None:
+    """Full symbol list for an exchange (one call). Each item has symbol,
+    description, type ('Common Stock' / 'REIT' / 'ETP' / ...), mic, currency."""
+    return _get("/stock/symbol", {"exchange": exchange})
+
+
 # ── Normalization helpers ────────────────────────────────────────────────────
 def _pct_to_fraction(v):
     """Finnhub growth/ROE metrics are percentages (12.3 -> 0.123).
@@ -99,30 +104,6 @@ def _fcf_growth(m: dict) -> float | None:
     if ann is None or ttm is None or ann <= 0 or ttm <= 0:
         return None
     return ann / ttm - 1.0
-
-
-def extract_prefilter(symbol: str) -> dict | None:
-    """Step 2 pre-filter inputs. quote() is the lightweight liveness probe;
-    profile2() supplies country, exchange, and market cap.
-
-    Avg daily volume is NOT available from quote/profile2 on Finnhub, so the
-    volume>100K cut is deferred to the metric phase (10DayAverageTradingVolume).
-    """
-    q = quote(symbol)
-    if not q or not q.get("c"):  # no current price -> not actively traded
-        return None
-    p = profile2(symbol)
-    if not p:
-        return None
-    return {
-        "ticker": symbol,
-        "company": p.get("name"),
-        "country": p.get("country"),
-        "exchange": p.get("exchange"),
-        "market_cap": p.get("marketCapitalization"),  # millions USD
-        "price": q.get("c"),
-        "is_nyse_or_nasdaq": is_nyse_or_nasdaq(p.get("exchange")),
-    }
 
 
 def extract_metrics(symbol: str) -> dict | None:

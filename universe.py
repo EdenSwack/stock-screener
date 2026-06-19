@@ -1,7 +1,12 @@
-"""Build the US-stock universe from three free static lists and deduplicate.
+"""Build the US-stock universe from Finnhub's symbol list.
 
-Resilient by design: if any single source fails (iShares in particular likes to
-block non-browser clients), it is logged and skipped rather than aborting the run.
+Primary source: Finnhub /stock/symbol (one authenticated call) — all US-listed
+COMMON stocks on NYSE / NASDAQ (mic in NYSE_NASDAQ_MICS). REITs drop out for free
+because Finnhub types them 'REIT', not 'Common Stock'.
+
+Falls back to the S&P 500 CSV only if the Finnhub call fails, so a transient error
+degrades the run rather than killing it. Returns dicts so company name + exchange
+flow through without a per-ticker profile2 call.
 """
 
 from __future__ import annotations
@@ -12,65 +17,77 @@ import logging
 
 import requests
 
-from config import SP500_CSV, NASDAQ100_CSV, RUSSELL2000_CSV
+import finnhub_client as fh
+from config import SP500_CSV, UNIVERSE_TYPE, NYSE_NASDAQ_MICS, MIC_TO_EXCHANGE
 
 log = logging.getLogger("screener.universe")
 
-# A browser-ish UA — iShares 403s the default python-requests UA.
 _HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; PortfolioScreener/1.0)"}
 
 
-def _get(url: str) -> str:
-    resp = requests.get(url, headers=_HEADERS, timeout=30)
-    resp.raise_for_status()
-    return resp.text
-
-
-def _tickers_from_simple_csv(text: str, symbol_cols=("Symbol", "Ticker")) -> list[str]:
-    """Parse a clean CSV whose first row is the header (S&P 500, Nasdaq-100)."""
-    reader = csv.DictReader(io.StringIO(text))
-    col = next((c for c in symbol_cols if c in (reader.fieldnames or [])), None)
-    if not col:
-        log.warning("no symbol column found; headers=%s", reader.fieldnames)
+def _from_finnhub() -> list[dict]:
+    """All US common stocks on NYSE/NASDAQ from /stock/symbol (REITs excluded)."""
+    data = fh.stock_symbols("US")
+    if not data:
         return []
-    return [row[col].strip().upper() for row in reader if row.get(col, "").strip()]
-
-
-def _tickers_from_ishares_csv(text: str) -> list[str]:
-    """iShares holdings CSVs have a metadata preamble before the real header row;
-    skip lines until we find the one starting with 'Ticker'."""
-    lines = text.splitlines()
-    start = next((i for i, ln in enumerate(lines) if ln.lstrip('"').startswith("Ticker")), None)
-    if start is None:
-        log.warning("could not locate 'Ticker' header in iShares CSV")
-        return []
-    reader = csv.DictReader(io.StringIO("\n".join(lines[start:])))
-    out = []
-    for row in reader:
-        sym = (row.get("Ticker") or "").strip().upper()
-        # Holdings files include cash/derivative rows with blank or non-equity tickers.
-        if sym and sym.isalpha():
-            out.append(sym)
+    out, dropped_type, dropped_mic = [], 0, 0
+    for row in data:
+        if row.get("type") != UNIVERSE_TYPE:  # excludes ETP / ADR / REIT / Unit / ...
+            dropped_type += 1
+            continue
+        mic = (row.get("mic") or "").upper()
+        if mic not in NYSE_NASDAQ_MICS:        # excludes OTC and ETF venues
+            dropped_mic += 1
+            continue
+        sym = (row.get("symbol") or "").strip().upper()
+        if not sym:
+            continue
+        out.append({"ticker": sym, "company": row.get("description") or None, "exchange": MIC_TO_EXCHANGE.get(mic, mic)})
+    log.info(
+        "Finnhub symbols: total=%d -> %d common NYSE/NASDAQ | dropped: type=%d mic=%d",
+        len(data), len(out), dropped_type, dropped_mic,
+    )
     return out
 
 
-def _safe_source(name: str, fn) -> list[str]:
-    try:
-        tickers = fn()
-        log.info("source %s -> %d tickers", name, len(tickers))
-        return tickers
-    except Exception as exc:  # noqa: BLE001 - one bad source must not kill the run
-        log.warning("source %s failed (%s) — skipping", name, exc)
+def _from_sp500() -> list[dict]:
+    """Degraded fallback: S&P 500 constituents (symbols only; may include a few REITs)."""
+    resp = requests.get(SP500_CSV, headers=_HEADERS, timeout=30)
+    resp.raise_for_status()
+    reader = csv.DictReader(io.StringIO(resp.text))
+    col = next((c for c in ("Symbol", "Ticker") if c in (reader.fieldnames or [])), None)
+    if not col:
         return []
+    return [
+        {"ticker": r[col].strip().upper(), "company": r.get("Name"), "exchange": None}
+        for r in reader
+        if r.get(col, "").strip()
+    ]
 
 
-def build_universe() -> list[str]:
-    """Return the deduplicated, sorted list of unique US tickers."""
-    collected: set[str] = set()
-    collected.update(_safe_source("sp500", lambda: _tickers_from_simple_csv(_get(SP500_CSV))))
-    collected.update(_safe_source("nasdaq100", lambda: _tickers_from_simple_csv(_get(NASDAQ100_CSV))))
-    collected.update(_safe_source("russell2000", lambda: _tickers_from_ishares_csv(_get(RUSSELL2000_CSV))))
+def build_universe() -> list[dict]:
+    """Return the deduplicated list of {ticker, company, exchange}."""
+    try:
+        rows = _from_finnhub()
+    except Exception as exc:  # noqa: BLE001 - never let universe build kill the run
+        log.warning("Finnhub symbol fetch failed (%s)", exc)
+        rows = []
 
-    universe = sorted(collected)
-    log.info("universe built: %d unique tickers", len(universe))
-    return universe
+    if not rows:
+        log.warning("Finnhub universe empty — falling back to S&P 500 CSV")
+        try:
+            rows = _from_sp500()
+            log.info("S&P 500 fallback -> %d tickers", len(rows))
+        except Exception as exc:  # noqa: BLE001
+            log.error("S&P 500 fallback also failed (%s)", exc)
+            rows = []
+
+    seen: set[str] = set()
+    uniq: list[dict] = []
+    for r in rows:
+        if r["ticker"] not in seen:
+            seen.add(r["ticker"])
+            uniq.append(r)
+    uniq.sort(key=lambda r: r["ticker"])
+    log.info("universe built: %d unique tickers", len(uniq))
+    return uniq

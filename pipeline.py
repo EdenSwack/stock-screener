@@ -1,8 +1,9 @@
-"""End-to-end screener run: universe -> pre-filter -> metrics -> screen.
+"""End-to-end screener run: universe -> metrics -> screen -> prices.
 
-Phases are logged separately so you can see exactly how many tickers were dropped
-at each stage. All metrics (incl. EV/EBITDA + FCF growth) come from the single
-Finnhub /stock/metric call in the metrics phase.
+The universe is Finnhub's symbol list filtered to NYSE/NASDAQ common stock (REITs
+excluded by type). Each ticker then takes ONE /stock/metric call (market cap + all
+screening metrics incl. EV/EBITDA + FCF growth); price is fetched only for the
+qualifiers. Phases are logged so you can see how many tickers drop at each stage.
 """
 
 from __future__ import annotations
@@ -35,58 +36,57 @@ _OUTPUT_FIELDS = [
 ]
 
 
-def _prefilter(universe: list[str]) -> list[dict]:
-    """PHASE 1 — cheap Finnhub quote + profile2 to drop non-US / sub-cap names.
-    Volume is checked later (Finnhub exposes no volume on quote/profile2)."""
-    survivors, dropped_data, dropped_country, dropped_mcap = [], 0, 0, 0
-    for i, ticker in enumerate(universe, 1):
-        if i % 100 == 0:
-            log.info("pre-filter progress %d/%d", i, len(universe))
-        base = fh.extract_prefilter(ticker)
-        if base is None:
-            dropped_data += 1
-            continue
-        if base.get("country") != "US":
-            dropped_country += 1
-            continue
-        mcap = base.get("market_cap")
-        if mcap is None or mcap < PREFILTER_MIN_MARKET_CAP_MUSD:
-            dropped_mcap += 1
-            continue
-        survivors.append(base)
-    log.info(
-        "PHASE 1 pre-filter: universe=%d survived=%d | dropped: no_data=%d non_US=%d mcap=%d",
-        len(universe), len(survivors), dropped_data, dropped_country, dropped_mcap,
-    )
-    return survivors
-
-
-def _metrics(survivors: list[dict]) -> list[dict]:
-    """PHASE 2 — Finnhub /stock/metric pull, deferred volume cut, missing-data skip."""
-    out, dropped_no_metrics, dropped_volume, dropped_missing = [], 0, 0, 0
-    for base in survivors:
+def _metrics(universe: list[dict]) -> list[dict]:
+    """PHASE 1 — one Finnhub /stock/metric call per ticker (the only per-ticker
+    call now). Applies the market-cap floor, volume cut, and missing-data skip,
+    and computes PEG. The universe is already exchange/type-filtered (NYSE/NASDAQ
+    common, REITs excluded), so no profile2 is needed."""
+    out = []
+    dropped_no_metrics = dropped_mcap = dropped_volume = dropped_missing = 0
+    total = len(universe)
+    for i, base in enumerate(universe, 1):
+        if i % 250 == 0:
+            log.info("metrics progress %d/%d (kept %d)", i, total, len(out))
         m = fh.extract_metrics(base["ticker"])
         if m is None:
             dropped_no_metrics += 1
             continue
-        stock = {**base, **m, "nyse_or_nasdaq": base.get("is_nyse_or_nasdaq")}
+        stock = {**base, **m, "nyse_or_nasdaq": True}
 
+        mcap = stock.get("market_cap")
+        if mcap is None or mcap < PREFILTER_MIN_MARKET_CAP_MUSD:
+            dropped_mcap += 1
+            continue
         vol = stock.get("avg_volume")
         if vol is not None and vol < PREFILTER_MIN_AVG_VOLUME:
             dropped_volume += 1
             continue
         if count_missing_required(stock) > 3:
             dropped_missing += 1
-            log.info("skip %s — >3 required metric fields missing", stock["ticker"])
             continue
 
         stock["peg"] = compute_peg(stock.get("pe"), stock.get("eps_growth"))
         out.append(stock)
     log.info(
-        "PHASE 2 metrics: in=%d survived=%d | dropped: no_metrics=%d low_volume=%d missing_fields=%d",
-        len(survivors), len(out), dropped_no_metrics, dropped_volume, dropped_missing,
+        "PHASE 1 metrics: universe=%d kept=%d | dropped: no_metrics=%d mcap=%d low_volume=%d missing=%d",
+        total, len(out), dropped_no_metrics, dropped_mcap, dropped_volume, dropped_missing,
     )
     return out
+
+
+def _fill_prices(buckets: dict[str, list[dict]]) -> None:
+    """PHASE 3 — fetch the live price for QUALIFYING tickers only (one quote each)
+    and patch it into every bucket record. Price isn't a screening factor, so only
+    the handful that qualify need it."""
+    tickers = {r["ticker"] for rows in buckets.values() for r in rows}
+    prices: dict[str, float | None] = {}
+    for t in tickers:
+        q = fh.quote(t)
+        prices[t] = q.get("c") if q else None
+    for rows in buckets.values():
+        for r in rows:
+            r["price"] = prices.get(r["ticker"])
+    log.info("PHASE 3 prices: fetched for %d qualifying ticker(s)", len(tickers))
 
 
 def _apply_screeners(stocks: list[dict]) -> dict[str, list[dict]]:
@@ -123,15 +123,14 @@ def run() -> dict:
     log.info("=== screener run started %s ===", started.isoformat())
 
     universe = build_universe()
-    survivors = _prefilter(universe)
-    stocks = _metrics(survivors)
+    stocks = _metrics(universe)
     buckets = _apply_screeners(stocks)
+    _fill_prices(buckets)
 
     results = {
         "last_updated": started.isoformat(),
         "stats": {
             "universe": len(universe),
-            "prefilter_survivors": len(survivors),
             "metric_survivors": len(stocks),
             "counts": {k: len(v) for k, v in buckets.items()},
         },
