@@ -146,6 +146,7 @@ def run() -> dict:
     # Publish to Supabase so the frontend reads it from there (not this service).
     # No-ops with a log line if SUPABASE_* env vars aren't set.
     publish.to_supabase(results)
+    publish.history_to_supabase(results)  # append this run's membership for history/forward-returns
 
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
     log.info("=== screener run finished in %.0fs ===", elapsed)
