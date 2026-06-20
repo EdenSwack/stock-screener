@@ -15,12 +15,14 @@ from datetime import datetime, timezone
 
 import finnhub_client as fh
 import screeners
+import twelvedata as td
 from config import (
     DATA_DIR,
     RESULTS_PATH,
     SCREENERS,
     PREFILTER_MIN_MARKET_CAP_MUSD,
     PREFILTER_MIN_AVG_VOLUME,
+    TWELVE_DATA_API_KEY,
 )
 from screeners import SCREENER_FILTERS, BUCKET_WEIGHTS, compute_peg, count_missing_required, score_bucket
 import publish
@@ -32,7 +34,7 @@ log = logging.getLogger("screener.pipeline")
 _OUTPUT_FIELDS = [
     "ticker", "company", "exchange", "market_cap", "price", "avg_volume",
     "peg", "eps_growth", "revenue_growth", "ev_ebitda", "fcf_growth",
-    "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity",
+    "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr",
 ]
 
 
@@ -89,6 +91,26 @@ def _fill_prices(buckets: dict[str, list[dict]]) -> None:
     log.info("PHASE 3 prices: fetched for %d qualifying ticker(s)", len(tickers))
 
 
+def _fill_atr(buckets: dict[str, list[dict]]) -> None:
+    """PHASE 4 — fetch 14-day ATR (Twelve Data) for QUALIFYING tickers only, for
+    volatility-adjusted/chandelier stops in the frontend. Throttled to the free
+    tier; no key -> skipped (frontend falls back to a % stop)."""
+    tickers = {r["ticker"] for rows in buckets.values() for r in rows}
+    if not TWELVE_DATA_API_KEY:
+        log.info("TWELVE_DATA_API_KEY not set — skipping ATR phase")
+        return
+    atrs: dict[str, float | None] = {}
+    for i, t in enumerate(sorted(tickers), 1):
+        atrs[t] = td.fetch_atr(t)
+        if i % 10 == 0:
+            log.info("ATR progress %d/%d", i, len(tickers))
+    got = sum(1 for v in atrs.values() if v is not None)
+    for rows in buckets.values():
+        for r in rows:
+            r["atr"] = atrs.get(r["ticker"])
+    log.info("PHASE 4 ATR: got %d/%d ticker(s)", got, len(tickers))
+
+
 def _apply_screeners(stocks: list[dict]) -> dict[str, list[dict]]:
     """PHASE 4 — tag each stock with the screeners it qualifies for and bucket it."""
     buckets: dict[str, list[dict]] = {k: [] for k in SCREENER_FILTERS}
@@ -126,6 +148,7 @@ def run() -> dict:
     stocks = _metrics(universe)
     buckets = _apply_screeners(stocks)
     _fill_prices(buckets)
+    _fill_atr(buckets)
 
     results = {
         "last_updated": started.isoformat(),

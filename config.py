@@ -42,6 +42,13 @@ SP500_CSV = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/ma
 PREFILTER_MIN_MARKET_CAP_MUSD = 300.0   # $300M floor — keep quality small/mid-caps, drop micro junk
 PREFILTER_MIN_AVG_VOLUME = 100_000      # shares/day
 
+# ── Twelve Data (ATR for trailing/chandelier stops) ──────────────────────────
+TWELVE_DATA_API_KEY = os.environ.get("TWELVE_DATA_API_KEY", "")
+TWELVE_DATA_BASE = "https://api.twelvedata.com"
+TWELVE_DATA_RATE_LIMIT_PER_MIN = 8      # free tier: 8 requests/min, 800/day
+ATR_PERIOD = 14                          # standard 14-day ATR
+ATR_MULTIPLIER = 3.0                     # chandelier stop = high − k×ATR
+
 # ── Scheduling ───────────────────────────────────────────────────────────────
 # 23:00 Israel time. Using the named tz (not a fixed UTC hour) so the run stays
 # at 23:00 local across daylight-saving changes — a fixed 20:00 UTC would drift
