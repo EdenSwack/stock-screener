@@ -88,3 +88,27 @@ def history_to_supabase(results: dict) -> None:
         log.info("published %d row(s) to Supabase screener_history (run_date=%s)", len(rows), run_date)
     except Exception as exc:  # noqa: BLE001 - history publish failure must not fail the run
         log.error("Supabase history publish failed: %s", exc)
+
+
+def runs_to_supabase(metrics: dict) -> None:
+    """Append one observability row (timings + API call counts) to
+    ``screener_runs`` for the System & Cost page. Insert-only; failure never
+    fails the run."""
+    if not SUPABASE_URL or not SERVICE_ROLE_KEY:
+        log.info("SUPABASE_* not set — skipping runs publish")
+        return
+    try:
+        resp = requests.post(
+            f"{SUPABASE_URL}/rest/v1/screener_runs",
+            headers={
+                "apikey": SERVICE_ROLE_KEY,
+                "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=metrics,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        log.info("published run metrics to Supabase screener_runs (duration=%ss)", metrics.get("duration_s"))
+    except Exception as exc:  # noqa: BLE001 - run-metrics publish failure must not fail the run
+        log.error("Supabase runs publish failed: %s", exc)

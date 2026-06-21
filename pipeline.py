@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 
 import finnhub_client as fh
@@ -164,12 +165,18 @@ def run() -> dict:
     started = datetime.now(timezone.utc)
     log.info("=== screener run started %s ===", started.isoformat())
 
-    universe = build_universe()
-    stocks = _metrics(universe)
-    buckets = _apply_screeners(stocks)
-    _fill_prices(buckets)
-    _fill_atr(buckets)
-    _fill_ema(buckets)
+    # Time each phase so the System & Cost page can show where the run spends time.
+    def _timed(fn, *a):
+        t = time.monotonic()
+        out = fn(*a)
+        return out, round(time.monotonic() - t, 1)
+
+    universe, t_universe = _timed(build_universe)
+    stocks, t_metrics = _timed(_metrics, universe)
+    buckets, t_screen = _timed(_apply_screeners, stocks)
+    _, t_prices = _timed(_fill_prices, buckets)
+    _, t_atr = _timed(_fill_atr, buckets)
+    _, t_ema = _timed(_fill_ema, buckets)
 
     results = {
         "last_updated": started.isoformat(),
@@ -193,6 +200,30 @@ def run() -> dict:
     publish.history_to_supabase(results)  # append this run's membership for history/forward-returns
 
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+
+    # One API call per universe ticker (/stock/metric), one quote + one ATR + one
+    # EMA per QUALIFYING ticker, plus the single /stock/symbol universe call.
+    qualifying = len({r["ticker"] for rows in buckets.values() for r in rows})
+    td_on = bool(TWELVE_DATA_API_KEY)
+    metrics = {
+        "run_at": started.isoformat(),
+        "duration_s": round(elapsed, 1),
+        "universe_count": len(universe),
+        "metric_survivors": len(stocks),
+        "qualifying_count": qualifying,
+        "finnhub_metric_calls": len(universe),
+        "finnhub_quote_calls": qualifying,
+        "finnhub_symbol_calls": 1,
+        "twelvedata_atr_calls": qualifying if td_on else 0,
+        "twelvedata_ema_calls": qualifying if td_on else 0,
+        "screener_counts": {k: len(v) for k, v in buckets.items()},
+        "phase_seconds": {
+            "universe": t_universe, "metrics": t_metrics, "screen": t_screen,
+            "prices": t_prices, "atr": t_atr, "ema": t_ema,
+        },
+    }
+    publish.runs_to_supabase(metrics)
+
     log.info("=== screener run finished in %.0fs ===", elapsed)
     return results
 
