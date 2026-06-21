@@ -34,7 +34,7 @@ log = logging.getLogger("screener.pipeline")
 _OUTPUT_FIELDS = [
     "ticker", "company", "exchange", "market_cap", "price", "avg_volume",
     "peg", "eps_growth", "revenue_growth", "ev_ebitda", "fcf_growth",
-    "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr",
+    "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr", "ema_150",
 ]
 
 
@@ -111,6 +111,26 @@ def _fill_atr(buckets: dict[str, list[dict]]) -> None:
     log.info("PHASE 4 ATR: got %d/%d ticker(s)", got, len(tickers))
 
 
+def _fill_ema(buckets: dict[str, list[dict]]) -> None:
+    """PHASE 5 — fetch the EMA-150 (Twelve Data) for QUALIFYING tickers only. The
+    frontend shows % distance of price from this line as a trend indicator (display
+    only, not a filter). Throttled to the free tier; no key -> skipped."""
+    tickers = {r["ticker"] for rows in buckets.values() for r in rows}
+    if not TWELVE_DATA_API_KEY:
+        log.info("TWELVE_DATA_API_KEY not set — skipping EMA phase")
+        return
+    emas: dict[str, float | None] = {}
+    for i, t in enumerate(sorted(tickers), 1):
+        emas[t] = td.fetch_ema(t)
+        if i % 10 == 0:
+            log.info("EMA progress %d/%d", i, len(tickers))
+    got = sum(1 for v in emas.values() if v is not None)
+    for rows in buckets.values():
+        for r in rows:
+            r["ema_150"] = emas.get(r["ticker"])
+    log.info("PHASE 5 EMA-150: got %d/%d ticker(s)", got, len(tickers))
+
+
 def _apply_screeners(stocks: list[dict]) -> dict[str, list[dict]]:
     """PHASE 4 — tag each stock with the screeners it qualifies for and bucket it."""
     buckets: dict[str, list[dict]] = {k: [] for k in SCREENER_FILTERS}
@@ -149,6 +169,7 @@ def run() -> dict:
     buckets = _apply_screeners(stocks)
     _fill_prices(buckets)
     _fill_atr(buckets)
+    _fill_ema(buckets)
 
     results = {
         "last_updated": started.isoformat(),

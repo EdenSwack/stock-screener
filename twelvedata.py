@@ -19,6 +19,7 @@ from config import (
     TWELVE_DATA_BASE,
     TWELVE_DATA_RATE_LIMIT_PER_MIN,
     ATR_PERIOD,
+    EMA_PERIOD,
 )
 
 log = logging.getLogger("screener.twelvedata")
@@ -58,4 +59,29 @@ def fetch_atr(symbol: str) -> float | None:
         return float(values[0]["atr"])
     except Exception as exc:  # noqa: BLE001 - never let an ATR failure break the run
         log.warning("ATR fetch failed for %s: %s", symbol, exc)
+        return None
+
+
+def fetch_ema(symbol: str, period: int = EMA_PERIOD) -> float | None:
+    """Latest daily EMA(period) for the symbol, or None on any failure / missing
+    key. Used for the price-vs-trend distance indicator (display only)."""
+    if not TWELVE_DATA_API_KEY:
+        return None
+    _throttle()
+    try:
+        resp = requests.get(
+            f"{TWELVE_DATA_BASE}/ema",
+            params={"symbol": symbol, "interval": "1day", "time_period": period, "apikey": TWELVE_DATA_API_KEY},
+            timeout=20,
+        )
+        data = resp.json()
+        if data.get("status") != "ok":
+            log.warning("EMA %s -> %s", symbol, data.get("message") or data.get("status"))
+            return None
+        values = data.get("values") or []
+        if not values:
+            return None
+        return float(values[0]["ema"])
+    except Exception as exc:  # noqa: BLE001 - never let an EMA failure break the run
+        log.warning("EMA fetch failed for %s: %s", symbol, exc)
         return None
