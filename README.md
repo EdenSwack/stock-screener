@@ -1,87 +1,93 @@
-# Stock Screener (Finnhub)
+# 📈 Nightly Stock Screener — a live financial data pipeline that runs for $0
 
-Builds a US-stock universe, pre-filters it, pulls fundamentals from Finnhub,
-applies four screeners nightly, and publishes the results to Supabase (the
-frontend reads from there). A small HTTP API is also available for local/manual use.
+A serverless, scheduled data pipeline that screens **the entire NYSE + NASDAQ common-stock universe every night**, ranks names across four strategies, enriches the survivors with volatility and trend indicators, and publishes the results to a database a web app reads from.
 
-## Why this is a Python service (not a Cloudflare Worker)
+It runs **completely free** — no servers, no paid APIs, no paid database — on GitHub Actions' cron, free-tier market-data APIs, Supabase, and Cloudflare.
 
-The full run is a long, rate-limited batch: the universe is a few thousand
-tickers and Finnhub's free tier caps at ~55 calls/min, so a run takes tens of
-minutes — well past a Worker's CPU/wall-clock limits. It runs as a **GitHub
-Actions cron** (`.github/workflows/screener.yml`) that executes `pipeline.py` and
-publishes to Supabase. Keep the split: frontend on Cloudflare Pages, proxies on
-Workers, this batch on GitHub Actions, data in Supabase.
+> **Every night, automatically:**
+> | | |
+> |---|---|
+> | 🌎 Stocks scanned | **~4,945** (full NYSE + NASDAQ common stock) |
+> | 🔬 Pass fundamentals | **~2,400** |
+> | ✅ Qualify for a screen | **~130** |
+> | 📡 API calls per run | **~5,300** → **~160,000 / month** |
+> | 🧮 Screening strategies | **4** (growth, refined growth, value, momentum) |
+> | ⏱️ Run time | **~2 hours** (rate-limit bound, not compute bound) |
+> | 💵 Monthly cost | **$0** |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Sources["Market data (free tier)"]
+      F["Finnhub<br/>fundamentals + quotes"]
+      T["Twelve Data<br/>ATR + EMA-150"]
+    end
+    subgraph Compute["GitHub Actions — nightly cron"]
+      P["pipeline.py<br/>universe to metrics to screen to enrich"]
+    end
+    subgraph Store["Supabase (Postgres)"]
+      C["screener_cache<br/>(latest results)"]
+      H["screener_history<br/>(per-run membership)"]
+      R["screener_runs<br/>(observability)"]
+    end
+    UI["Web app<br/>(Cloudflare Pages)"]
+
+    F --> P
+    T --> P
+    P --> C
+    P --> H
+    P --> R
+    C --> UI
+```
+
+**Why this shape:** the run is a long, rate-limited batch (thousands of tickers against a 60-req/min API → ~2 hours), far past a serverless function's wall-clock limit. So the batch lives on **GitHub Actions cron** (free, unlimited minutes on a public repo), the database is **Supabase** (the app reads from it — the pipeline never serves traffic), and the frontend + lightweight proxies are on **Cloudflare**. Each tier does the one thing it's free and good at.
+
+## How a run works
+
+| Phase | What it does | Cost |
+|---|---|---|
+| **1 · Universe** | Pull every symbol from Finnhub, keep NYSE/NASDAQ **common stock** (REITs excluded by type), ~$300M market-cap floor | 1 API call |
+| **2 · Metrics** | One `/stock/metric` call per ticker → P/E, EPS & revenue growth, EV/EBITDA, FCF growth, P/B, ROE, beta, D/E… then drop names below the cap/volume floor or missing too many fields | ~4,945 calls |
+| **3 · Screen** | Tag each survivor against 4 screeners; score within each (min-max **Score**) and against fixed anchors (absolute **Quality** grade) | free (in-memory) |
+| **4 · Enrich** | Only for the **~130 that qualify**: live price, 14-day **ATR** (chandelier stops), and **EMA-150** (trend-distance) from Twelve Data | ~390 calls |
+| **5 · Publish** | Upsert results + append per-run membership + write a run-metrics row | 3 writes |
+
+The cost-aware bit: expensive per-name data (price, ATR, EMA) is fetched **only for names that survive screening**, not the whole universe — that's the difference between ~5,300 calls/night and ~15,000.
+
+## Engineering decisions worth a look
+
+- **`null = fail`** — every filter field must be present *and* in range; a missing value fails the screen (matches how TradingView treats nulls). Because all fundamentals come from one source, a null means genuinely-missing data, not a flaky enrichment step. ([`screeners.py`](screeners.py))
+- **Rate-limit throttling** — Finnhub (60/min) and Twelve Data (8/min, 800/day) each have a token-bucket throttle so a run never trips a limit or incurs a bill. ([`twelvedata.py`](twelvedata.py))
+- **Two scores, on purpose** — a relative **Score** (rank within tonight's list) *and* an absolute **Quality** grade (vs fixed benchmarks, comparable across nights). A stock can rank #1 tonight yet be mediocre in absolute terms — both numbers are shown so you can tell.
+- **Built-in observability** — every run writes timings + per-API call counts to `screener_runs`, so the web app has a live "System & Cost" page showing exactly what each run sent and how close it got to any free-tier cap.
 
 ## Data sources
 
-Every field comes from Finnhub free-tier endpoints — there is **no second data
-source and no per-ticker enrichment step**.
-
 | Field group | Source | Endpoint |
 |---|---|---|
-| Universe | GitHub CSVs + iShares IWM | static files |
-| Country, exchange, market cap, price | Finnhub (free) | `/quote`, `/stock/profile2` |
-| P/E, EPS growth, revenue growth, P/B, beta, ROE, P/S, P/CF, P/FCF, D/E, volume | Finnhub (free) | `/stock/metric?metric=all` |
-| EV/EBITDA | Finnhub (free) | `evEbitdaTTM` from `/stock/metric` |
-| FCF growth | Finnhub (free), derived | `currentEv/freeCashFlowAnnual ÷ ...TTM − 1` |
+| Universe (exchange, type) | Finnhub (free) | `/stock/symbol` |
+| Fundamentals (P/E, growth, P/B, ROE, beta, D/E, EV/EBITDA…) | Finnhub (free) | `/stock/metric?metric=all` |
+| FCF growth (derived) | Finnhub (free) | `FCF_TTM / FCF_lastFY − 1` |
+| Live price | Finnhub (free) | `/quote` |
+| 14-day ATR, EMA-150 | Twelve Data (free) | `/atr`, `/ema` |
 
-**FCF growth basis:** the two EV/FCF multiples share the same enterprise-value
-numerator, so it cancels and the ratio is `FCF_TTM / FCF_lastFY − 1` — trailing-12-
-month FCF vs the last full fiscal year (a recent-FCF-growth measure, not strict
-FY-over-FY). Computed only when both FCF figures are positive; otherwise null.
-See `finnhub_client._fcf_growth`.
+> Personal/educational project. Market data is from free-tier APIs under their respective terms; figures may be delayed or inaccurate and nothing here is financial advice.
 
-## Missing-data rule (null = fail)
-
-Every filter field must be present and in range; a null fails that screener
-(matches TradingView, where a null fails a range filter). Because all fields come
-from one Finnhub call, a null reflects genuinely-missing data — there is no flaky
-second source to degrade coverage. `LENIENT_FIELDS` in `screeners.py` is an empty
-set kept as a toggle if you ever want to restore lenient/`partial_data` behavior.
-
-## Run it
+## Run it locally
 
 ```bash
 cd screener
 pip install -r requirements.txt
-export FINNHUB_API_KEY=your_key_here
+export FINNHUB_API_KEY=your_key
+export TWELVE_DATA_API_KEY=your_key      # optional; ATR/EMA skipped if absent
+# optional: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to publish
 
-python pipeline.py          # one full run to stdout, writes data/results.json + publishes to Supabase
-# or run the API + dev scheduler:
-python server.py            # serves on :8787
+python pipeline.py    # one full run → data/results.json (+ publishes if Supabase env is set)
 ```
 
-## Endpoints
+## Stack
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/api/screener` | cached results: 4 lists + `last_updated` + run `stats` |
-| POST | `/api/screener/refresh` | trigger a re-run in the background (202) |
-| GET | `/api/screener/health` | liveness + whether a run is in progress |
-
-## Scheduling
-
-- **Production:** GitHub Actions cron `0 21 * * *` (nightly, 21:00 UTC). GitHub
-  cron is UTC-only, so it lands at 23:00 Israel in winter (UTC+2) and 00:00 in
-  summer (UTC+3) — a ±1h DST drift we accept.
-- **Dev only:** `server.py`'s APScheduler uses the named tz `23:00 Asia/Jerusalem`
-  (`config.SCHEDULE_*`); it is not the production path.
-
-## Files
-
-- `config.py` — infra config, units convention, exchange matcher
-- `universe.py` — build + dedupe the three source lists
-- `finnhub_client.py` — throttled free-tier calls + metric normalization (incl. EV/EBITDA + FCF growth)
-- `screeners.py` — filter definitions, PEG, missing-data rule, scoring
-- `pipeline.py` — orchestration + phase logging + JSON output + Supabase publish
-- `server.py` — FastAPI endpoints + dev APScheduler job
-
-## Known caveats / to verify
-
-- **Growth-metric units**: Finnhub growth/ROE fields are percentages, divided by
-  100 to fractions. Verified 2026-06-17 against live AAPL data (see
-  `_pct_to_fraction` in `finnhub_client.py`).
-- **FCF growth basis** is TTM-vs-last-fiscal-year (see above), not FY-over-FY.
-- **Volume pre-filter** is applied in the metric phase, not the pre-filter phase,
-  because Finnhub's quote/profile2 expose no volume field.
+`Python` · `GitHub Actions` (cron) · `Supabase` (Postgres) · `Cloudflare` (Pages + Workers) · `Finnhub` · `Twelve Data`
