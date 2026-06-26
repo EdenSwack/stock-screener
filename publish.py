@@ -63,6 +63,18 @@ def history_to_supabase(results: dict) -> None:
             "screener": screener,
             "composite_score": s.get("composite_score"),
             "price": s.get("price"),
+            # Point-in-time score ingredients (backend/analysis only — for the
+            # forward-return / factor-attribution study; not shown in the app).
+            "quality_score": s.get("quality_score"),
+            "revenue_growth": s.get("revenue_growth"),
+            "eps_growth": s.get("eps_growth"),
+            "peg": s.get("peg"),
+            "fcf_growth": s.get("fcf_growth"),
+            "roe": s.get("roe"),
+            "beta": s.get("beta"),
+            "ev_ebitda": s.get("ev_ebitda"),
+            "atr": s.get("atr"),
+            "ema_150": s.get("ema_150"),
         }
         for screener, stocks in results["screeners"].items()
         for s in stocks
