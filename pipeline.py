@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 
 import finnhub_client as fh
 import screeners
+import sectors as sec
 import twelvedata as td
 from config import (
     DATA_DIR,
@@ -36,6 +37,7 @@ _OUTPUT_FIELDS = [
     "ticker", "company", "exchange", "market_cap", "price", "avg_volume",
     "peg", "eps_growth", "revenue_growth", "ev_ebitda", "fcf_growth",
     "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr", "ema_150",
+    "sector", "sector_rs_3m",
 ]
 
 
@@ -132,6 +134,25 @@ def _fill_ema(buckets: dict[str, list[dict]]) -> None:
     log.info("PHASE 5 EMA-150: got %d/%d ticker(s)", got, len(tickers))
 
 
+def _fill_sector(buckets: dict[str, list[dict]]) -> None:
+    """PHASE 6 — tag each QUALIFYING ticker with its GICS sector (Finnhub
+    profile2 industry → sector) and that sector's 3-month relative strength vs
+    SPY (sector ETF return − SPY return). Display/analysis only."""
+    tickers = {r["ticker"] for rows in buckets.values() for r in rows}
+    sector_by_ticker: dict[str, str | None] = {}
+    for t in sorted(tickers):
+        p = fh.profile2(t)
+        sector_by_ticker[t] = sec.industry_to_sector((p or {}).get("finnhubIndustry"))
+    rs = sec.sector_relative_strength()  # {sector: rs_3m}
+    got = sum(1 for v in sector_by_ticker.values() if v is not None)
+    for rows in buckets.values():
+        for r in rows:
+            s = sector_by_ticker.get(r["ticker"])
+            r["sector"] = s
+            r["sector_rs_3m"] = rs.get(s) if s else None
+    log.info("PHASE 6 sector: tagged %d/%d ticker(s), %d sector RS values", got, len(tickers), len(rs))
+
+
 def _apply_screeners(stocks: list[dict]) -> dict[str, list[dict]]:
     """PHASE 4 — tag each stock with the screeners it qualifies for and bucket it."""
     buckets: dict[str, list[dict]] = {k: [] for k in SCREENER_FILTERS}
@@ -177,6 +198,7 @@ def run() -> dict:
     _, t_prices = _timed(_fill_prices, buckets)
     _, t_atr = _timed(_fill_atr, buckets)
     _, t_ema = _timed(_fill_ema, buckets)
+    _, t_sector = _timed(_fill_sector, buckets)
 
     results = {
         "last_updated": started.isoformat(),
@@ -219,7 +241,7 @@ def run() -> dict:
         "screener_counts": {k: len(v) for k, v in buckets.items()},
         "phase_seconds": {
             "universe": t_universe, "metrics": t_metrics, "screen": t_screen,
-            "prices": t_prices, "atr": t_atr, "ema": t_ema,
+            "prices": t_prices, "atr": t_atr, "ema": t_ema, "sector": t_sector,
         },
     }
     publish.runs_to_supabase(metrics)
