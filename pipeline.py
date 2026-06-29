@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import finnhub_client as fh
 import screeners
 import sectors as sec
+import technicals as tech
 import twelvedata as td
 from config import (
     DATA_DIR,
@@ -38,6 +39,7 @@ _OUTPUT_FIELDS = [
     "peg", "eps_growth", "revenue_growth", "ev_ebitda", "fcf_growth",
     "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr", "ema_150",
     "sector", "sector_rs_3m",
+    "price_score", "sma_200", "rsi_14", "bb_pct", "mom_6m",
 ]
 
 
@@ -153,6 +155,31 @@ def _fill_sector(buckets: dict[str, list[dict]]) -> None:
     log.info("PHASE 6 sector: tagged %d/%d ticker(s), %d sector RS values", got, len(tickers), len(rs))
 
 
+def _fill_technicals(buckets: dict[str, list[dict]]) -> None:
+    """PHASE 7 — price-action technicals (SMA-200, RSI-14, Bollinger %B, 6m
+    momentum) for QUALIFYING tickers, plus an absolute Price Score (trend +
+    pullback entry). One daily-price fetch per ticker (Yahoo proxy, no cap).
+    Must run after _fill_sector (Price Score uses sector RS)."""
+    tickers = {r["ticker"] for rows in buckets.values() for r in rows}
+    techs: dict[str, dict | None] = {}
+    for i, t in enumerate(sorted(tickers), 1):
+        techs[t] = tech.fetch_technicals(t)
+        if i % 25 == 0:
+            log.info("technicals progress %d/%d", i, len(tickers))
+    got = sum(1 for v in techs.values() if v is not None)
+    for rows in buckets.values():
+        for r in rows:
+            tv = techs.get(r["ticker"]) or {}
+            r["sma_200"] = tv.get("sma_200")
+            r["rsi_14"] = tv.get("rsi_14")
+            r["bb_pct"] = tv.get("bb_pct")
+            r["mom_6m"] = tv.get("mom_6m")
+            r["price_score"] = tech.price_score(
+                r.get("price"), r.get("ema_150"), tv.get("sma_200"), tv.get("mom_6m"), r.get("sector_rs_3m")
+            )
+    log.info("PHASE 7 technicals: got %d/%d ticker(s)", got, len(tickers))
+
+
 def _apply_screeners(stocks: list[dict]) -> dict[str, list[dict]]:
     """PHASE 4 — tag each stock with the screeners it qualifies for and bucket it."""
     buckets: dict[str, list[dict]] = {k: [] for k in SCREENER_FILTERS}
@@ -199,6 +226,7 @@ def run() -> dict:
     _, t_atr = _timed(_fill_atr, buckets)
     _, t_ema = _timed(_fill_ema, buckets)
     _, t_sector = _timed(_fill_sector, buckets)
+    _, t_tech = _timed(_fill_technicals, buckets)
 
     results = {
         "last_updated": started.isoformat(),
@@ -241,7 +269,7 @@ def run() -> dict:
         "screener_counts": {k: len(v) for k, v in buckets.items()},
         "phase_seconds": {
             "universe": t_universe, "metrics": t_metrics, "screen": t_screen,
-            "prices": t_prices, "atr": t_atr, "ema": t_ema, "sector": t_sector,
+            "prices": t_prices, "atr": t_atr, "ema": t_ema, "sector": t_sector, "technicals": t_tech,
         },
     }
     publish.runs_to_supabase(metrics)

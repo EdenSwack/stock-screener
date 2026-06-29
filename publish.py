@@ -77,6 +77,11 @@ def history_to_supabase(results: dict) -> None:
             "ema_150": s.get("ema_150"),
             "sector": s.get("sector"),
             "sector_rs_3m": s.get("sector_rs_3m"),
+            "price_score": s.get("price_score"),
+            "sma_200": s.get("sma_200"),
+            "rsi_14": s.get("rsi_14"),
+            "bb_pct": s.get("bb_pct"),
+            "mom_6m": s.get("mom_6m"),
         }
         for screener, stocks in results["screeners"].items()
         for s in stocks
