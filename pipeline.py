@@ -175,7 +175,7 @@ def _fill_technicals(buckets: dict[str, list[dict]]) -> None:
             r["bb_pct"] = tv.get("bb_pct")
             r["mom_6m"] = tv.get("mom_6m")
             r["price_score"] = tech.price_score(
-                r.get("price"), r.get("ema_150"), tv.get("sma_200"), tv.get("mom_6m"), r.get("sector_rs_3m")
+                r.get("price"), r.get("ema_150"), tv.get("sma_200"), tv.get("mom_6m"), r.get("sector_rs_3m"), tv.get("rsi_14")
             )
     log.info("PHASE 7 technicals: got %d/%d ticker(s)", got, len(tickers))
 

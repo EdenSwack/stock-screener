@@ -111,6 +111,11 @@ def quality_score(stock: dict) -> float | None:
         lo, hi, inverted = QUALITY_ANCHORS[f]
         n = (hi - v) / (hi - lo) if inverted else (v - lo) / (hi - lo)
         n = max(0.0, min(1.0, n))  # clamp to [0, 1]
+        # Implausibly-extreme positive values (e.g. ROE 268% from negative/tiny
+        # equity, revenue +150% from M&A/base effects) are usually distorted, not
+        # genuine quality — give partial rather than full credit.
+        if not inverted and v > 3 * hi:
+            n = min(n, 0.6)
         acc += w * n
         total_w += w
     return round(100 * acc / total_w, 1) if total_w else None

@@ -94,13 +94,16 @@ def _clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
 
 
-# Sub-score weights (trend + pullback entry). Null components drop out and their
-# weight is redistributed proportionally (like score_bucket).
-_PRICE_WEIGHTS = {"regime": 0.30, "proximity": 0.30, "momentum": 0.25, "sector": 0.15}
+# Sub-score weights (trend + pullback entry). Proximity (pullback, not stretched)
+# is weighted above momentum so the score rewards a sane entry, not just strength.
+# Null components drop out and their weight is redistributed (like score_bucket).
+_PRICE_WEIGHTS = {"regime": 0.30, "proximity": 0.35, "momentum": 0.20, "sector": 0.15}
 
 
-def price_score(price, ema_150, sma_200, mom_6m, sector_rs_3m) -> float | None:
-    """Absolute 0-100 "how attractive is the entry price" score."""
+def price_score(price, ema_150, sma_200, mom_6m, sector_rs_3m, rsi_14=None) -> float | None:
+    """Absolute 0-100 "how attractive is the entry price" score (trend + pullback).
+    A final extension penalty haircuts chasing an overbought / far-above-trend
+    name, so a stretched chart can't score well on momentum alone."""
     comps: dict[str, float] = {}
 
     # Regime: above the 200-day = uptrend (1.0); fades to 0 by ~10% below it.
@@ -134,5 +137,15 @@ def price_score(price, ema_150, sma_200, mom_6m, sector_rs_3m) -> float | None:
     total_w = sum(_PRICE_WEIGHTS[k] for k in comps)
     if not total_w:
         return None
-    acc = sum(_PRICE_WEIGHTS[k] * v for k, v in comps.items())
-    return round(100 * acc / total_w, 1)
+    base = 100 * sum(_PRICE_WEIGHTS[k] * v for k, v in comps.items()) / total_w
+
+    # Extension penalty: chasing an overbought (RSI > 70) or far-above-trend
+    # (>20% over EMA-150) name is a poor entry — haircut up to 50%.
+    ext = 0.0
+    if price and ema_150:
+        over = price / ema_150 - 1
+        if over > 0.20:
+            ext = max(ext, min(1.0, (over - 0.20) / 0.20))  # +20%→0 … +40%→1
+    if rsi_14 is not None and rsi_14 > 70:
+        ext = max(ext, min(1.0, (rsi_14 - 70) / 30))  # 70→0 … 100→1
+    return round(base * (1 - 0.5 * ext), 1)
