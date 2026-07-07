@@ -121,6 +121,43 @@ def quality_score(stock: dict) -> float | None:
     return round(100 * acc / total_w, 1) if total_w else None
 
 
+# ── Risk gate ───────────────────────────────────────────────────────────────────
+# A price/risk overlay applied to the DISPLAYED list (not the experiment's history
+# capture). Fundamentals passing a screen means the business is good; this gate asks
+# whether the ENTRY is safe — the missing piece behind names that scored well yet
+# tanked (e.g. extended/high-ATR/weak-sector). Tunable; treat thresholds as a first
+# hypothesis to be validated by the forward-return experiment.
+RISK_GATE = {
+    "sector_rs_min": 0.0,    # don't buy into a weakening sector (3m relative strength >= 0)
+    "atr_pct_max": 0.05,     # cap daily volatility at 5% of price (ATR/price)
+    "quality_min": 60.0,     # absolute fundamental-quality floor
+    "price_score_min": 60.0, # absolute trend+pullback entry floor
+    "recent_1w_min": -0.08,  # exclude names already down >8% in the last week (freshly tanked)
+}
+
+
+def passes_risk_gate(row: dict, cfg: dict | None = None) -> bool:
+    """True if a qualifying row also clears the price/risk overlay. Strong gates
+    (quality, price score, sector RS) must be present AND in range; volatility and
+    recent-drop checks only fire when their data is available (missing data doesn't
+    over-exclude)."""
+    g = cfg or RISK_GATE
+    q, ps, srs = row.get("quality_score"), row.get("price_score"), row.get("sector_rs_3m")
+    if q is None or q < g["quality_min"]:
+        return False
+    if ps is None or ps < g["price_score_min"]:
+        return False
+    if srs is None or srs < g["sector_rs_min"]:
+        return False
+    price, atr = row.get("price"), row.get("atr")
+    if price and atr and price > 0 and (atr / price) > g["atr_pct_max"]:
+        return False
+    m1 = row.get("mom_1w")
+    if m1 is not None and m1 < g["recent_1w_min"]:
+        return False
+    return True
+
+
 def evaluate(stock: dict, screener_key: str):
     """Return (qualifies: bool, partial: bool).
 

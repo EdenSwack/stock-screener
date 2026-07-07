@@ -174,6 +174,7 @@ def _fill_technicals(buckets: dict[str, list[dict]]) -> None:
             r["rsi_14"] = tv.get("rsi_14")
             r["bb_pct"] = tv.get("bb_pct")
             r["mom_6m"] = tv.get("mom_6m")
+            r["mom_1w"] = tv.get("mom_1w")  # for the risk gate's recent-tank check
             r["price_score"] = tech.price_score(
                 r.get("price"), r.get("ema_150"), tv.get("sma_200"), tv.get("mom_6m"), r.get("sector_rs_3m"), tv.get("rsi_14")
             )
@@ -228,7 +229,17 @@ def run() -> dict:
     _, t_sector = _timed(_fill_sector, buckets)
     _, t_tech = _timed(_fill_technicals, buckets)
 
-    results = {
+    # Risk gate: tag every qualifying row (kept in full for the experiment's history),
+    # then build the DISPLAYED buckets from only the rows that clear the gate — so the
+    # app shows fewer, sturdier names while the experiment still learns from everything.
+    for rows in buckets.values():
+        for r in rows:
+            r["risk_gate"] = screeners.passes_risk_gate(r)
+    display_buckets = {k: [r for r in v if r.get("risk_gate")] for k, v in buckets.items()}
+    for k in buckets:
+        log.info("RISK GATE %-22s %d -> %d", k, len(buckets[k]), len(display_buckets[k]))
+
+    results = {  # full set → history/forward-returns (experiment)
         "last_updated": started.isoformat(),
         "stats": {
             "universe": len(universe),
@@ -238,16 +249,21 @@ def run() -> dict:
         "labels": SCREENERS,
         "screeners": buckets,
     }
+    display_results = {  # gated set → results.json + app cache (what the user sees)
+        **results,
+        "stats": {**results["stats"], "counts": {k: len(v) for k, v in display_buckets.items()}},
+        "screeners": display_buckets,
+    }
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp = RESULTS_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(results, indent=2))
+    tmp.write_text(json.dumps(display_results, indent=2))
     os.replace(tmp, RESULTS_PATH)  # atomic — readers never see a half-written file
 
     # Publish to Supabase so the frontend reads it from there (not this service).
     # No-ops with a log line if SUPABASE_* env vars aren't set.
-    publish.to_supabase(results)
-    publish.history_to_supabase(results)  # append this run's membership for history/forward-returns
+    publish.to_supabase(display_results)          # app shows gated names only
+    publish.history_to_supabase(results)          # experiment captures the FULL set
 
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
 

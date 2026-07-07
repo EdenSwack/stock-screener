@@ -85,6 +85,7 @@ def fetch_technicals(symbol: str) -> dict | None:
         "sma_200": _sma(closes, 200),
         "rsi_14": _rsi(closes, 14),
         "bb_pct": _bollinger_pct(closes, 20, 2.0),
+        "mom_1w": _momentum(closes, 5),
         "mom_3m": _momentum(closes, 63),
         "mom_6m": _momentum(closes, 126),
     }
