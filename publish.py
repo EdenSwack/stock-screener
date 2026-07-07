@@ -56,11 +56,14 @@ def history_to_supabase(results: dict) -> None:
         return
 
     run_date = results["last_updated"][:10]  # YYYY-MM-DD
+    version = results.get("screener_version")
     rows = [
         {
             "run_date": run_date,
             "ticker": s["ticker"],
             "screener": screener,
+            "risk_gate": s.get("risk_gate"),           # would the CURRENT version show it?
+            "screener_version": version,               # which version produced this row
             "composite_score": s.get("composite_score"),
             "price": s.get("price"),
             # Point-in-time score ingredients (backend/analysis only — for the

@@ -23,6 +23,7 @@ from config import (
     DATA_DIR,
     RESULTS_PATH,
     SCREENERS,
+    SCREENER_VERSION,
     PREFILTER_MIN_MARKET_CAP_MUSD,
     PREFILTER_MIN_AVG_VOLUME,
     TWELVE_DATA_API_KEY,
@@ -241,6 +242,7 @@ def run() -> dict:
 
     results = {  # full set → history/forward-returns (experiment)
         "last_updated": started.isoformat(),
+        "screener_version": SCREENER_VERSION,
         "stats": {
             "universe": len(universe),
             "metric_survivors": len(stocks),

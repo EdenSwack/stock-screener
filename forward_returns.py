@@ -26,7 +26,9 @@ SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 PROXY = "https://finhub-ticker-proxy.edenswack1.workers.dev"
 
-HORIZONS = {"21d": 21, "63d": 63, "126d": 126, "252d": 252}
+# Short horizons (5/10d) give an EARLY read on the current version; long ones the
+# fuller picture. Keys map to trading-day counts.
+HORIZONS = {"5d": 5, "10d": 10, "21d": 21, "63d": 63, "126d": 126, "252d": 252}
 ATR_K = 3.0  # chandelier multiplier (matches the app's stop)
 _THROTTLE_S = 0.15  # be polite to the proxy
 

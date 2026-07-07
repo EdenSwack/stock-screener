@@ -19,6 +19,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Bump on any change to the screener FILTERS, SCORING, or RISK GATE, so the
+# experiment can grade each version separately (the screener changes over time).
+SCREENER_VERSION = "v3-riskgate-2026-07"
+
 # ── Finnhub ──────────────────────────────────────────────────────────────────
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
 FINNHUB_BASE = "https://finnhub.io/api/v1"
