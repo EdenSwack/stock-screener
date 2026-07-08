@@ -15,6 +15,7 @@ their tickers never re-fetched). Runs as its own GitHub Actions cron.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 
@@ -156,14 +157,24 @@ def run() -> None:
             if ei is None:
                 continue
             atr = snaps[(run_date, ticker)].get("atr")
-            row: dict = {"run_date": run_date, "ticker": ticker, "entry_price": closes[ei]}
+            # Seed every horizon column so all rows in a bulk upsert share the SAME
+            # keys — PostgREST rejects a batch whose objects have differing columns.
+            row: dict = {"run_date": run_date, "ticker": ticker,
+                         "entry_price": closes[ei] if math.isfinite(closes[ei]) else None}
+            for key in HORIZONS:
+                row[f"ret_{key}"] = None
+                row[f"stop_ret_{key}"] = None
+                row[f"mkt_ret_{key}"] = None
             filled = False
             for key, n in HORIZONS.items():
-                if ei + n < len(closes):
-                    row[f"ret_{key}"] = closes[ei + n] / closes[ei] - 1
-                    row[f"stop_ret_{key}"] = _stop_return(closes[ei:ei + n + 1], atr)
-                    if si is not None and si + n < len(spy_closes):
-                        row[f"mkt_ret_{key}"] = spy_closes[si + n] / spy_closes[si] - 1
+                if ei + n < len(closes) and closes[ei]:
+                    rv = closes[ei + n] / closes[ei] - 1
+                    row[f"ret_{key}"] = rv if math.isfinite(rv) else None
+                    sv = _stop_return(closes[ei:ei + n + 1], atr)
+                    row[f"stop_ret_{key}"] = sv if sv is not None and math.isfinite(sv) else None
+                    if si is not None and si + n < len(spy_closes) and spy_closes[si]:
+                        mv = spy_closes[si + n] / spy_closes[si] - 1
+                        row[f"mkt_ret_{key}"] = mv if math.isfinite(mv) else None
                     filled = True
             if filled:
                 upserts.append(row)
