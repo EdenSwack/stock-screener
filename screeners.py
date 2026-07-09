@@ -25,7 +25,7 @@ REQUIRED_METRIC_FIELDS = [
 # Each screener is a list of (field, predicate, label).
 SCREENER_FILTERS = {
     "growth_tech": [
-        ("peg", lambda v: 0.5 <= v <= 1.0, "PEG 0.5–1"),
+        ("peg", lambda v: 0.5 <= v <= 1.5, "PEG 0.5–1.5"),
         ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
         ("ev_ebitda", lambda v: 0 < v <= 27, "EV/EBITDA ≤27 (positive)"),
