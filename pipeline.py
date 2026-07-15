@@ -19,6 +19,7 @@ import screeners
 import sectors as sec
 import technicals as tech
 import twelvedata as td
+from etf_screen import run_etf_screen
 from config import (
     DATA_DIR,
     RESULTS_PATH,
@@ -278,6 +279,14 @@ def run() -> dict:
         })
     log.info("EVALUATIONS %d ticker(s)", len(evaluations))
 
+    # ETF Trend screen — technical ranking over the curated ETF universe (separate
+    # flow: ETFs have no fundamentals). Isolated so a failure never fails the run.
+    try:
+        etfs = run_etf_screen()
+    except Exception as exc:  # noqa: BLE001
+        log.error("ETF screen failed: %s", exc)
+        etfs = []
+
     results = {  # full set → history/forward-returns (experiment)
         "last_updated": started.isoformat(),
         "screener_version": SCREENER_VERSION,
@@ -294,6 +303,7 @@ def run() -> dict:
         "stats": {**results["stats"], "counts": {k: len(v) for k, v in display_buckets.items()}},
         "screeners": display_buckets,
         "watchlist": watchlist,  # quality-on-sale (trend-blocked) names for the app
+        "etfs": etfs,            # ETF Trend screen (momentum / stability / yield)
     }
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
