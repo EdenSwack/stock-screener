@@ -240,6 +240,22 @@ def run() -> dict:
     for k in buckets:
         log.info("RISK GATE %-22s %d -> %d", k, len(buckets[k]), len(display_buckets[k]))
 
+    # "Quality on sale": qualifiers the gate holds back ONLY on price/trend grounds
+    # (strong fundamentals, sane volatility) — watch-for-the-turn candidates, deduped.
+    watchlist = []
+    seen: set[str] = set()
+    for rows in buckets.values():
+        for r in rows:
+            t = r["ticker"]
+            if t in seen or not screeners.is_quality_on_sale(r):
+                continue
+            seen.add(t)
+            w = dict(r)
+            w["block_reasons"] = screeners.gate_fail_reasons(r)
+            watchlist.append(w)
+    watchlist.sort(key=lambda x: (x.get("quality_score") or 0), reverse=True)
+    log.info("QUALITY ON SALE %d name(s)", len(watchlist))
+
     results = {  # full set → history/forward-returns (experiment)
         "last_updated": started.isoformat(),
         "screener_version": SCREENER_VERSION,
@@ -255,6 +271,7 @@ def run() -> dict:
         **results,
         "stats": {**results["stats"], "counts": {k: len(v) for k, v in display_buckets.items()}},
         "screeners": display_buckets,
+        "watchlist": watchlist,  # quality-on-sale (trend-blocked) names for the app
     }
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)

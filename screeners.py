@@ -158,6 +158,39 @@ def passes_risk_gate(row: dict, cfg: dict | None = None) -> bool:
     return True
 
 
+def gate_fail_reasons(row: dict, cfg: dict | None = None) -> list[str]:
+    """Which risk-gate checks a qualifying row fails (empty list = clears the gate)."""
+    g = cfg or RISK_GATE
+    reasons: list[str] = []
+    q, ps, srs = row.get("quality_score"), row.get("price_score"), row.get("sector_rs_3m")
+    if q is None or q < g["quality_min"]:
+        reasons.append("quality")
+    if ps is None or ps < g["price_score_min"]:
+        reasons.append("price_score")
+    if srs is None or srs < g["sector_rs_min"]:
+        reasons.append("sector_rs")
+    price, atr = row.get("price"), row.get("atr")
+    if price and atr and price > 0 and (atr / price) > g["atr_pct_max"]:
+        reasons.append("atr")
+    m1 = row.get("mom_1w")
+    if m1 is not None and m1 < g["recent_1w_min"]:
+        reasons.append("recent_1w")
+    return reasons
+
+
+# "Quality on sale": a fundamentally strong name (clears the quality floor, sane
+# volatility, not freshly crashing) that the risk gate holds back ONLY because its
+# price/trend is out of favor — below trend or in a lagging sector. These are
+# watch-for-the-turn candidates (good business, waiting on a trend confirmation),
+# NOT falling knives with broken fundamentals or an active this-week collapse.
+_TREND_BLOCKS = {"price_score", "sector_rs"}
+
+
+def is_quality_on_sale(row: dict, cfg: dict | None = None) -> bool:
+    reasons = gate_fail_reasons(row, cfg)
+    return bool(reasons) and set(reasons).issubset(_TREND_BLOCKS)
+
+
 def evaluate(stock: dict, screener_key: str):
     """Return (qualifies: bool, partial: bool).
 
