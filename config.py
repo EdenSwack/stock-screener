@@ -54,14 +54,6 @@ ATR_PERIOD = 14                          # standard 14-day ATR
 ATR_MULTIPLIER = 3.0                     # chandelier stop = high − k×ATR
 EMA_PERIOD = 150                         # long trend line; % distance is shown as an indicator
 
-# ── Scheduling ───────────────────────────────────────────────────────────────
-# 23:00 Israel time. Using the named tz (not a fixed UTC hour) so the run stays
-# at 23:00 local across daylight-saving changes — a fixed 20:00 UTC would drift
-# to 22:00 local in winter when Israel is UTC+2.
-SCHEDULE_TZ = "Asia/Jerusalem"
-SCHEDULE_HOUR = 23
-SCHEDULE_MINUTE = 0
-
 # ── Output ───────────────────────────────────────────────────────────────────
 DATA_DIR = Path(__file__).parent / "data"
 RESULTS_PATH = DATA_DIR / "results.json"
