@@ -112,6 +112,35 @@ def history_to_supabase(results: dict) -> None:
         log.error("Supabase history publish failed: %s", exc)
 
 
+def evaluations_to_supabase(evaluations: list[dict]) -> None:
+    """Upsert the per-ticker screen explainer (keyed by ticker, single snapshot — each
+    run overwrites, no history kept) for the app's 'why isn't X in the list?' lookup."""
+    if not SUPABASE_URL or not SERVICE_ROLE_KEY:
+        log.info("SUPABASE_* not set — skipping evaluations publish")
+        return
+    if not evaluations:
+        return
+    headers = {
+        "apikey": SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates",
+    }
+    try:
+        for i in range(0, len(evaluations), 500):
+            resp = requests.post(
+                f"{SUPABASE_URL}/rest/v1/screener_evaluations",
+                params={"on_conflict": "ticker"},
+                headers=headers,
+                json=evaluations[i:i + 500],
+                timeout=60,
+            )
+            resp.raise_for_status()
+        log.info("published %d evaluation(s) to Supabase screener_evaluations", len(evaluations))
+    except Exception as exc:  # noqa: BLE001 - evaluations publish failure must not fail the run
+        log.error("Supabase evaluations publish failed: %s", exc)
+
+
 def runs_to_supabase(metrics: dict) -> None:
     """Append one observability row (timings + API call counts) to
     ``screener_runs`` for the System & Cost page. Insert-only; failure never

@@ -256,6 +256,28 @@ def run() -> dict:
     watchlist.sort(key=lambda x: (x.get("quality_score") or 0), reverse=True)
     log.info("QUALITY ON SALE %d name(s)", len(watchlist))
 
+    # Per-ticker explainer: for every metric-survivor, which screens it passed, which
+    # filters it failed per screen, and (for qualifiers) its risk-gate status. Powers
+    # the app's "why isn't X in the list?" lookup.
+    gate_info = {r["ticker"]: (r.get("risk_gate"), screeners.gate_fail_reasons(r))
+                 for rows in buckets.values() for r in rows}
+    run_date = started.date().isoformat()
+    evaluations = []
+    for s in stocks:
+        passed, fails = [], {}
+        for key in SCREENER_FILTERS:
+            ff = screeners.failed_filters(s, key)
+            if ff:
+                fails[key] = ff
+            else:
+                passed.append(key)
+        rg, reasons = gate_info.get(s["ticker"], (None, None))
+        evaluations.append({
+            "ticker": s["ticker"], "run_date": run_date, "company": s.get("company"),
+            "passed": passed, "fails": fails, "risk_gate": rg, "block_reasons": reasons,
+        })
+    log.info("EVALUATIONS %d ticker(s)", len(evaluations))
+
     results = {  # full set → history/forward-returns (experiment)
         "last_updated": started.isoformat(),
         "screener_version": SCREENER_VERSION,
@@ -283,6 +305,7 @@ def run() -> dict:
     # No-ops with a log line if SUPABASE_* env vars aren't set.
     publish.to_supabase(display_results)          # app shows gated names only
     publish.history_to_supabase(results)          # experiment captures the FULL set
+    publish.evaluations_to_supabase(evaluations)  # per-ticker "why isn't X in the list?" lookup
 
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
 

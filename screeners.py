@@ -211,6 +211,21 @@ def evaluate(stock: dict, screener_key: str):
     return True, partial
 
 
+def failed_filters(stock: dict, screener_key: str) -> list[str]:
+    """Labels of the filters this stock FAILS for a screener (empty list = passes).
+    Powers the app's 'why isn't X in this screen?' lookup — same predicates as
+    evaluate(), but returns the human labels instead of a bool."""
+    out: list[str] = []
+    for field, check, label in SCREENER_FILTERS[screener_key]:
+        val = stock.get(field)
+        if val is None:
+            if field not in LENIENT_FIELDS:
+                out.append(label)
+        elif not check(val):
+            out.append(label)
+    return out
+
+
 # ── Composite scoring ────────────────────────────────────────────────────────
 # Two weight buckets. Screeners 2+3 use the richer 6-factor blend; screeners 1+4
 # use the 4-factor blend. Normalization is min-max WITHIN each screener's result
