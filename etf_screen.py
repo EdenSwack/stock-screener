@@ -1,15 +1,16 @@
-"""ETF Trend screen — a TECHNICAL ranking over a curated, liquid, non-leveraged ETF
-universe. ETFs have no company fundamentals, so instead of PEG/ROE this ranks price
-action across three lenses:
+"""ETF Trend screen — a TECHNICAL ranking over a focused, curated ETF universe. ETFs
+have no company fundamentals, so instead of PEG/ROE this ranks price action across
+three lenses:
 
   • Momentum   — trend (above the 200-day) + relative strength vs SPY + 12-month return
-  • Stability  — low annualized volatility + shallow max drawdown (calm core holdings)
+  • Stability  — low annualized volatility + shallow max drawdown (calmer holdings)
   • Yield      — trailing dividend yield (income)
 
-Curation itself is the "quality" filter: only reputable, liquid, broad / sector /
-thematic / factor / bond / commodity funds — NO leveraged, inverse, or single-stock
-ETFs. Data: one Yahoo daily-history call per ETF (via the proxy, no API cap) for the
-price-action scores, plus one Finnhub metric call for the dividend yield.
+The universe is a curated thematic set — Technology, Cloud Computing, Cyber Security,
+AI, Gold & Materials, Agriculture, Financials, Banks, Energy — reputable, liquid funds
+only; NO leveraged, inverse, or single-stock ETFs. Data: one Yahoo daily-history call
+per ETF (via the proxy, no API cap) for the price-action scores, plus one Finnhub
+metric call for the dividend yield.
 
 Scores are absolute (fixed anchors, 0–100) so they're comparable and stable over
 time — a first-pass heuristic to be validated by the forward-return experiment, not
@@ -26,57 +27,46 @@ log = logging.getLogger("screener.etf")
 
 BENCHMARK = "SPY"
 
-# (ticker, display name, category). Curated — reputable, liquid, no leveraged/inverse/single-stock.
+# (ticker, display name, category). Curated to the requested themes — reputable,
+# liquid, no leveraged/inverse/single-stock.
 CURATED: list[tuple[str, str, str]] = [
-    # Broad US
-    ("VOO", "Vanguard S&P 500", "Broad US"), ("VTI", "Vanguard Total US Market", "Broad US"),
-    ("SPLG", "SPDR Portfolio S&P 500", "Broad US"), ("QQQ", "Invesco Nasdaq-100", "Broad US"),
-    ("QQQM", "Invesco Nasdaq-100 (M)", "Broad US"), ("DIA", "SPDR Dow Jones", "Broad US"),
-    ("IWM", "iShares Russell 2000", "Broad US"), ("RSP", "Invesco S&P 500 Equal-Weight", "Broad US"),
-    # Style
-    ("VUG", "Vanguard Growth", "Style"), ("VTV", "Vanguard Value", "Style"),
-    ("SCHG", "Schwab US Large-Cap Growth", "Style"), ("MGK", "Vanguard Mega-Cap Growth", "Style"),
-    ("VBR", "Vanguard Small-Cap Value", "Style"), ("MTUM", "iShares Momentum Factor", "Style"),
-    ("QUAL", "iShares Quality Factor", "Style"), ("USMV", "iShares Min-Volatility", "Style"),
-    # Ex-US / EM
-    ("VXUS", "Vanguard Total Intl", "Ex-US"), ("VEA", "Vanguard Developed Markets", "Ex-US"),
-    ("IEFA", "iShares Core Developed", "Ex-US"), ("VWO", "Vanguard Emerging Markets", "Ex-US"),
-    ("IEMG", "iShares Core EM", "Ex-US"), ("EWJ", "iShares MSCI Japan", "Ex-US"),
-    ("INDA", "iShares MSCI India", "Ex-US"), ("MCHI", "iShares MSCI China", "Ex-US"),
-    ("EWZ", "iShares MSCI Brazil", "Ex-US"), ("ISRA", "VanEck Israel", "Ex-US"),
-    # Sectors
-    ("XLK", "Technology Select", "Sector"), ("XLF", "Financials Select", "Sector"),
-    ("XLE", "Energy Select", "Sector"), ("XLV", "Health Care Select", "Sector"),
-    ("XLI", "Industrials Select", "Sector"), ("XLY", "Consumer Discretionary", "Sector"),
-    ("XLP", "Consumer Staples", "Sector"), ("XLU", "Utilities Select", "Sector"),
-    ("XLB", "Materials Select", "Sector"), ("XLRE", "Real Estate Select", "Sector"),
-    ("XLC", "Communication Services", "Sector"), ("VGT", "Vanguard Info Tech", "Sector"),
-    ("SOXX", "iShares Semiconductor", "Sector"), ("SMH", "VanEck Semiconductor", "Sector"),
-    ("KRE", "SPDR Regional Banking", "Sector"), ("ITA", "iShares Aerospace & Defense", "Sector"),
-    ("IBB", "iShares Biotech", "Sector"), ("XBI", "SPDR Biotech", "Sector"),
-    ("XOP", "SPDR Oil & Gas E&P", "Sector"), ("VNQ", "Vanguard Real Estate", "Sector"),
-    # Thematic
-    ("MAGS", "Roundhill Magnificent 7", "Thematic"), ("EUAD", "Select STOXX Europe Aero/Def", "Thematic"),
-    ("ARKK", "ARK Innovation", "Thematic"), ("ICLN", "iShares Clean Energy", "Thematic"),
-    ("TAN", "Invesco Solar", "Thematic"), ("LIT", "Global X Lithium", "Thematic"),
-    ("BOTZ", "Global X Robotics/AI", "Thematic"), ("CIBR", "First Trust Cybersecurity", "Thematic"),
-    ("SKYY", "First Trust Cloud", "Thematic"), ("FDN", "First Trust Internet", "Thematic"),
-    # Dividend / income
-    ("SCHD", "Schwab US Dividend", "Dividend"), ("VYM", "Vanguard High Dividend Yield", "Dividend"),
-    ("VIG", "Vanguard Dividend Appreciation", "Dividend"), ("DGRO", "iShares Dividend Growth", "Dividend"),
-    ("NOBL", "ProShares Dividend Aristocrats", "Dividend"), ("JEPI", "JPMorgan Equity Premium Income", "Dividend"),
-    ("JEPQ", "JPMorgan Nasdaq Premium Income", "Dividend"),
-    # Bonds
-    ("BND", "Vanguard Total Bond", "Bonds"), ("AGG", "iShares Core US Bond", "Bonds"),
-    ("TLT", "iShares 20+ Year Treasury", "Bonds"), ("IEF", "iShares 7-10 Year Treasury", "Bonds"),
-    ("SHY", "iShares 1-3 Year Treasury", "Bonds"), ("LQD", "iShares Investment-Grade Corp", "Bonds"),
-    ("HYG", "iShares High-Yield Corp", "Bonds"), ("TIP", "iShares TIPS", "Bonds"),
-    ("MUB", "iShares National Muni", "Bonds"), ("BNDX", "Vanguard Total Intl Bond", "Bonds"),
-    # Commodity / gold / crypto
-    ("GLD", "SPDR Gold Shares", "Commodity"), ("IAU", "iShares Gold Trust", "Commodity"),
-    ("SLV", "iShares Silver Trust", "Commodity"), ("DBC", "Invesco Commodity Index", "Commodity"),
-    ("IBIT", "iShares Bitcoin Trust", "Crypto"), ("ETHA", "iShares Ethereum Trust", "Crypto"),
-    ("FBTC", "Fidelity Bitcoin", "Crypto"),
+    # Technology
+    ("XLK", "Technology Select Sector", "Technology"),
+    ("VGT", "Vanguard Information Technology", "Technology"),
+    ("IYW", "iShares US Technology", "Technology"),
+    # Cloud Computing
+    ("SKYY", "First Trust Cloud Computing", "Cloud Computing"),
+    ("WCLD", "WisdomTree Cloud Computing", "Cloud Computing"),
+    ("CLOU", "Global X Cloud Computing", "Cloud Computing"),
+    # Cyber Security
+    ("CIBR", "First Trust Nasdaq Cybersecurity", "Cyber Security"),
+    ("HACK", "Amplify Cybersecurity", "Cyber Security"),
+    ("BUG", "Global X Cybersecurity", "Cyber Security"),
+    # AI
+    ("BOTZ", "Global X Robotics & AI", "AI"),
+    ("AIQ", "Global X Artificial Intelligence & Tech", "AI"),
+    ("IRBO", "iShares Robotics & AI", "AI"),
+    ("ROBO", "ROBO Global Robotics & Automation", "AI"),
+    # Gold & Materials
+    ("GLD", "SPDR Gold Shares", "Gold & Materials"),
+    ("IAU", "iShares Gold Trust", "Gold & Materials"),
+    ("GDX", "VanEck Gold Miners", "Gold & Materials"),
+    ("XLB", "Materials Select Sector", "Gold & Materials"),
+    ("XME", "SPDR Metals & Mining", "Gold & Materials"),
+    # Agriculture
+    ("DBA", "Invesco DB Agriculture", "Agriculture"),
+    ("MOO", "VanEck Agribusiness", "Agriculture"),
+    # Financials
+    ("XLF", "Financial Select Sector", "Financials"),
+    ("VFH", "Vanguard Financials", "Financials"),
+    # Banks
+    ("KRE", "SPDR S&P Regional Banking", "Banks"),
+    ("KBE", "SPDR S&P Bank", "Banks"),
+    ("KBWB", "Invesco KBW Bank", "Banks"),
+    # Energy
+    ("XLE", "Energy Select Sector", "Energy"),
+    ("XOP", "SPDR Oil & Gas Exploration & Production", "Energy"),
+    ("OIH", "VanEck Oil Services", "Energy"),
 ]
 
 
