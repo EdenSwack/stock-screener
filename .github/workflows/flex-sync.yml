@@ -1,0 +1,36 @@
+name: IBKR Flex Sync
+
+on:
+  schedule:
+    # US market close is 4pm ET = 20:00 UTC (summer) / 21:00 UTC (winter). Run at
+    # 21:30 UTC on weekdays for a post-close snapshot, plus 13:30 UTC for a fresh
+    # start-of-day read. Cron is UTC-only, so we accept the ±1h DST drift. IBKR
+    # rate-limits Flex, so we keep it to twice a day, not every few minutes.
+    - cron: '30 21 * * 1-5'
+    - cron: '30 13 * * 1-5'
+  workflow_dispatch:          # manual "Run now" from the GitHub UI
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run flex sync
+        run: python flex_sync.py
+        env:
+          IBKR_FLEX_TOKEN: ${{ secrets.IBKR_FLEX_TOKEN }}
+          IBKR_FLEX_QUERY_ID: ${{ secrets.IBKR_FLEX_QUERY_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # The owner's Supabase user id — not a secret (a bare UUID does nothing
+          # without a signed JWT). Hardcoded so there's one less secret to manage.
+          FLEX_USER_ID: 452a15b2-1a36-4a2f-9a2b-cb615f7324fe
