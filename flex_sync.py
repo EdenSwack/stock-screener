@@ -53,7 +53,10 @@ def send_request() -> tuple[str, str]:
     if root.findtext("Status") != "Success":
         raise RuntimeError(f"SendRequest failed ({root.findtext('ErrorCode')}): {root.findtext('ErrorMessage')}")
     ref = root.findtext("ReferenceCode")
-    base = root.findtext("Url") or f"{FLEX_BASE}/GetStatement"
+    # Ignore the <Url> IBKR returns — it can point at the legacy `gdcdyn` host,
+    # which no longer resolves from the GitHub runner. Always call GetStatement on
+    # the known-good `ndcdyn` base (FLEX_BASE).
+    base = f"{FLEX_BASE}/GetStatement"
     return ref, base
 
 
