@@ -1,0 +1,32 @@
+name: IV Snapshot
+
+on:
+  schedule:
+    # Once per weekday shortly after US market close (4pm ET = 20:00/21:00 UTC by
+    # season). 21:45 UTC captures settled closing quotes. One row per ticker per day
+    # is all IV rank needs.
+    - cron: '45 21 * * 1-5'
+  workflow_dispatch:          # manual "Run now"
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests scipy
+
+      - name: Run IV snapshot
+        run: python iv_snapshot.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Owner's Supabase user id (bare UUID, not a secret) — scopes which
+          # holdings' tickers get snapshotted. Same value the flex sync uses.
+          HOLDINGS_USER_ID: 452a15b2-1a36-4a2f-9a2b-cb615f7324fe
