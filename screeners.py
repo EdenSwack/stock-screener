@@ -43,19 +43,21 @@ SCREENER_FILTERS = {
         ("pfcf", lambda v: 0 <= v <= 29, "P/FCF 0–29"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
+    # "Quality on sale" — reasonably-priced quality, not deep-value unicorns. The old
+    # thresholds (P/B<1 AND ROE>14% AND growth) were self-contradicting and returned 0;
+    # loosened so it surfaces the buy-low, hold-a-few-months names the wheel wants.
+    # P/S and P/CF dropped as hard filters (kept as display columns).
     "traditional_value": [
         ("market_cap", lambda v: v > 300, "Market cap > $300M"),
-        ("peg", lambda v: v < 1.0, "PEG < 1"),
-        ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
-        ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
-        ("pb", lambda v: v < 1.0, "P/B < 1"),
-        ("ev_ebitda", lambda v: 0 < v < 9, "EV/EBITDA <9 (positive)"),
-        ("roe", lambda v: v > 0.14, "ROE > 14%"),
-        ("ps", lambda v: v < 2.0, "P/S < 2"),
-        ("pcf", lambda v: v < 15, "P/CF < 15"),
-        ("debt_equity", lambda v: v < 1.5, "Debt/Equity < 1.5"),
-        ("beta", lambda v: 0.5 <= v <= 1.4, "Beta 0.5–1.4"),
-        ("pfcf", lambda v: 0 <= v <= 15, "P/FCF 0–15"),
+        ("peg", lambda v: v < 1.3, "PEG < 1.3"),
+        ("eps_growth", lambda v: v > 0.05, "EPS growth > 5%"),
+        ("revenue_growth", lambda v: v > 0.05, "Revenue growth > 5%"),
+        ("pb", lambda v: 0 < v < 3.0, "P/B < 3 (positive)"),
+        ("ev_ebitda", lambda v: 0 < v <= 14, "EV/EBITDA ≤14 (positive)"),
+        ("roe", lambda v: v > 0.10, "ROE > 10%"),
+        ("debt_equity", lambda v: v < 2.0, "Debt/Equity < 2"),
+        ("beta", lambda v: 0 <= v <= 1.5, "Beta 0–1.5"),
+        ("pfcf", lambda v: 0 <= v <= 20, "P/FCF 0–20"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
     "momentum_breakout": [
