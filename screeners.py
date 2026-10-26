@@ -30,6 +30,7 @@ SCREENER_FILTERS = {
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
         ("ev_ebitda", lambda v: 0 < v <= 27, "EV/EBITDA ≤27 (positive)"),
         ("fcf_growth", lambda v: v > 0.0, "FCF growth > 0%"),
+        ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
     "growth_tech_refined": [
@@ -41,6 +42,7 @@ SCREENER_FILTERS = {
         ("pb", lambda v: v < 9, "P/B < 9"),
         ("beta", lambda v: 0 <= v <= 1.5, "Beta 0–1.5"),
         ("pfcf", lambda v: 0 <= v <= 29, "P/FCF 0–29"),
+        ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
     # "Quality on sale" — reasonably-priced quality, not deep-value unicorns. The old
@@ -58,6 +60,7 @@ SCREENER_FILTERS = {
         ("debt_equity", lambda v: v < 2.0, "Debt/Equity < 2"),
         ("beta", lambda v: 0 <= v <= 1.5, "Beta 0–1.5"),
         ("pfcf", lambda v: 0 <= v <= 20, "P/FCF 0–20"),
+        ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
     "momentum_breakout": [
@@ -65,6 +68,7 @@ SCREENER_FILTERS = {
         ("eps_growth", lambda v: v > 0.15, "EPS growth > 15%"),
         ("beta", lambda v: 1.0 <= v <= 2.0, "Beta 1.0–2.0"),
         ("market_cap", lambda v: v > 500, "Market cap > $500M"),
+        ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
 }
@@ -72,7 +76,9 @@ SCREENER_FILTERS = {
 
 def compute_peg(pe, eps_growth) -> float | None:
     """PEG = P/E / (EPS-growth-fraction × 100). Only when both are positive
-    (spec step 5). eps_growth is stored as a fraction, so ×100 yields growth %."""
+    (spec step 5). eps_growth is stored as a fraction, so ×100 yields growth %.
+    The pipeline computes it from trailing inputs first, then (v4+) replaces it with
+    forward P/E ÷ next-year consensus growth for screen candidates (_fill_forward)."""
     if pe is None or eps_growth is None or pe <= 0 or eps_growth <= 0:
         return None
     return pe / (eps_growth * 100.0)

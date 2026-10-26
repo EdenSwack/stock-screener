@@ -14,6 +14,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+import estimates as est
 import finnhub_client as fh
 import screeners
 import sectors as sec
@@ -38,7 +39,7 @@ log = logging.getLogger("screener.pipeline")
 # Output fields per the spec's JSON structure (step 8), plus the flags we add.
 _OUTPUT_FIELDS = [
     "ticker", "company", "exchange", "market_cap", "price", "avg_volume",
-    "peg", "eps_growth", "revenue_growth", "ev_ebitda", "fcf_growth",
+    "peg", "eps_growth", "eps_growth_fwd", "pe_fwd", "revenue_growth", "ev_ebitda", "fcf_growth",
     "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr", "ema_150",
     "sector", "sector_rs_3m",
     "price_score", "sma_200", "rsi_14", "bb_pct", "mom_6m",
@@ -81,6 +82,34 @@ def _metrics(universe: list[dict]) -> list[dict]:
         total, len(out), dropped_no_metrics, dropped_mcap, dropped_volume, dropped_missing,
     )
     return out
+
+
+def _fill_forward(stocks: list[dict]) -> None:
+    """PHASE 1b — forward estimates (yfinance) for screen CANDIDATES only: stocks that
+    pass every filter of at least one screener other than PEG and next-year growth
+    (the two fields this phase supplies). For those, PEG becomes forward P/E ÷ next-
+    year consensus EPS growth, and eps_growth_fwd feeds the 'next-year growth > 0'
+    filter. Non-candidates fail some other filter regardless, so they're skipped to
+    keep the run inside the Actions timeout; no coverage -> None (null=fail)."""
+    forward_fields = {"peg", "eps_growth_fwd"}
+
+    def _candidate(s: dict) -> bool:
+        for flt in SCREENER_FILTERS.values():
+            if all(f in forward_fields or (s.get(f) is not None and chk(s[f])) for f, chk, _ in flt):
+                return True
+        return False
+
+    cands = [s for s in stocks if _candidate(s)]
+    got = 0
+    for i, s in enumerate(cands, 1):
+        fwd = est.fetch_forward(s["ticker"]) or {}
+        s["eps_growth_fwd"] = fwd.get("eps_growth_fwd")
+        s["pe_fwd"] = fwd.get("pe_fwd")
+        s["peg"] = compute_peg(s["pe_fwd"], s["eps_growth_fwd"])
+        got += bool(fwd)
+        if i % 50 == 0:
+            log.info("forward progress %d/%d", i, len(cands))
+    log.info("PHASE 1b forward: %d candidate(s), estimates for %d", len(cands), got)
 
 
 def _fill_prices(buckets: dict[str, list[dict]]) -> None:
@@ -224,6 +253,7 @@ def run() -> dict:
 
     universe, t_universe = _timed(build_universe)
     stocks, t_metrics = _timed(_metrics, universe)
+    _, t_forward = _timed(_fill_forward, stocks)
     buckets, t_screen = _timed(_apply_screeners, stocks)
     _, t_prices = _timed(_fill_prices, buckets)
     _, t_atr = _timed(_fill_atr, buckets)
@@ -336,7 +366,7 @@ def run() -> dict:
         "twelvedata_ema_calls": qualifying if td_on else 0,
         "screener_counts": {k: len(v) for k, v in buckets.items()},
         "phase_seconds": {
-            "universe": t_universe, "metrics": t_metrics, "screen": t_screen,
+            "universe": t_universe, "metrics": t_metrics, "forward": t_forward, "screen": t_screen,
             "prices": t_prices, "atr": t_atr, "ema": t_ema, "sector": t_sector, "technicals": t_tech,
         },
     }
