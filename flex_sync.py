@@ -158,6 +158,10 @@ def parse_transactions(xml_text: str) -> list[dict]:
     IBKR CSV import writes (amount in price, quantity 1; absolute values)."""
     root = ET.fromstring(xml_text)
     out: list[dict] = []
+    stmt = root.find(".//FlexStatement")
+    if stmt is not None:
+        log.info("statement %s→%s sections: %s", stmt.get("fromDate"), stmt.get("toDate"),
+                 ", ".join(f"{c.tag}({len(c)})" for c in stmt))
 
     for ct in root.iter("CashTransaction"):
         a = ct.attrib
