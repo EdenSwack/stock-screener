@@ -31,7 +31,11 @@ SECTOR_ETF = {
 
 # Substring → sector, checked in order (specific before generic). Finnhub's
 # finnhubIndustry strings are granular, so keyword-match rather than exact-map.
+# Health Care comes before Technology: "biotechnology" contains "technology", so
+# checking tech first tagged biotechs as Technology and gated them against XLK.
 _KEYWORDS: list[tuple[str, str]] = [
+    ("pharmaceutic", "Health Care"), ("biotech", "Health Care"), ("life science", "Health Care"),
+    ("medical", "Health Care"), ("health", "Health Care"),
     ("semiconduct", "Technology"), ("software", "Technology"), ("hardware", "Technology"),
     ("electronic", "Technology"), ("information technology", "Technology"), ("technology", "Technology"),
     ("telecom", "Communication Services"), ("media", "Communication Services"),
@@ -39,8 +43,6 @@ _KEYWORDS: list[tuple[str, str]] = [
     ("communication", "Communication Services"),
     ("bank", "Financials"), ("insurance", "Financials"), ("capital market", "Financials"),
     ("financial", "Financials"), ("diversified financ", "Financials"),
-    ("pharmaceutic", "Health Care"), ("biotech", "Health Care"), ("life science", "Health Care"),
-    ("medical", "Health Care"), ("health", "Health Care"),
     ("food", "Consumer Staples"), ("beverage", "Consumer Staples"), ("tobacco", "Consumer Staples"),
     ("household", "Consumer Staples"), ("personal product", "Consumer Staples"), ("staples", "Consumer Staples"),
     ("retail", "Consumer Discretionary"), ("automobile", "Consumer Discretionary"), ("auto ", "Consumer Discretionary"),
@@ -66,6 +68,16 @@ def industry_to_sector(industry: str | None) -> str | None:
         if kw in low:
             return sector
     return None
+
+
+# Miners and steel makers: earnings follow commodity prices, so a forward PEG built
+# on a price recovery looks like growth when it isn't. Kept out of the growth screens.
+_COMMODITY_KEYWORDS = ("metal", "mining", "steel", "gold", "silver", "copper", "aluminum")
+
+
+def is_commodity_producer(industry: str | None) -> bool:
+    low = (industry or "").lower()
+    return any(kw in low for kw in _COMMODITY_KEYWORDS)
 
 
 def _three_month_return(symbol: str) -> float | None:

@@ -40,6 +40,7 @@ log = logging.getLogger("screener.pipeline")
 _OUTPUT_FIELDS = [
     "ticker", "company", "exchange", "market_cap", "price", "avg_volume",
     "peg", "eps_growth", "eps_growth_fwd", "pe_fwd", "revenue_growth", "ev_ebitda", "fcf_growth",
+    "eps_growth_3y", "revenue_growth_3y", "fcf_margin", "net_debt_ebitda", "next_earnings",
     "pb", "beta", "pfcf", "roe", "ps", "pcf", "debt_equity", "atr", "ema_150",
     "sector", "sector_rs_3m",
     "price_score", "sma_200", "rsi_14", "bb_pct", "mom_6m",
@@ -84,6 +85,16 @@ def _metrics(universe: list[dict]) -> list[dict]:
     return out
 
 
+# Filled by later yfinance / profile phases, for screen candidates only.
+_FUND_FIELDS = {"eps_growth_3y", "revenue_growth_3y", "fcf_margin", "net_debt_ebitda"}
+
+
+def _passes_except(s: dict, skip: set[str]) -> bool:
+    """True if the stock passes every filter of some screener, ignoring `skip` fields."""
+    return any(all(f in skip or (s.get(f) is not None and chk(s[f])) for f, chk, _ in flt)
+               for flt in SCREENER_FILTERS.values())
+
+
 def _fill_forward(stocks: list[dict]) -> None:
     """PHASE 1b — forward estimates (yfinance) for screen CANDIDATES only: stocks that
     pass every filter of at least one screener other than PEG and next-year growth
@@ -91,15 +102,7 @@ def _fill_forward(stocks: list[dict]) -> None:
     year consensus EPS growth, and eps_growth_fwd feeds the 'next-year growth > 0'
     filter. Non-candidates fail some other filter regardless, so they're skipped to
     keep the run inside the Actions timeout; no coverage -> None (null=fail)."""
-    forward_fields = {"peg", "eps_growth_fwd"}
-
-    def _candidate(s: dict) -> bool:
-        for flt in SCREENER_FILTERS.values():
-            if all(f in forward_fields or (s.get(f) is not None and chk(s[f])) for f, chk, _ in flt):
-                return True
-        return False
-
-    cands = [s for s in stocks if _candidate(s)]
+    cands = [s for s in stocks if _passes_except(s, {"peg", "eps_growth_fwd", "not_commodity"} | _FUND_FIELDS)]
     got = 0
     for i, s in enumerate(cands, 1):
         fwd = est.fetch_forward(s["ticker"]) or {}
@@ -110,6 +113,46 @@ def _fill_forward(stocks: list[dict]) -> None:
         if i % 50 == 0:
             log.info("forward progress %d/%d", i, len(cands))
     log.info("PHASE 1b forward: %d candidate(s), estimates for %d", len(cands), got)
+
+
+_INDUSTRY: dict[str, str | None] = {}  # ticker -> Finnhub industry, reused by _fill_sector
+
+
+def _industry(ticker: str) -> str | None:
+    if ticker not in _INDUSTRY:
+        _INDUSTRY[ticker] = (fh.profile2(ticker) or {}).get("finnhubIndustry")
+    return _INDUSTRY[ticker]
+
+
+def _fill_industry(stocks: list[dict]) -> None:
+    """PHASE 1c — industry for stocks that pass every other filter of a screen using
+    'not_commodity' (the growth screens), so miners and steel makers can be excluded.
+    Others keep None, which only matters for screens they already fail."""
+    users = [flt for flt in SCREENER_FILTERS.values() if any(f == "not_commodity" for f, _, _ in flt)]
+
+    def _needs(s: dict) -> bool:
+        return any(all(f == "not_commodity" or (s.get(f) is not None and chk(s[f])) for f, chk, _ in flt)
+                   for flt in users)
+
+    cands = [s for s in stocks if _needs(s)]
+    for s in cands:
+        s["not_commodity"] = not sec.is_commodity_producer(_industry(s["ticker"]))
+    log.info("PHASE 1c industry: %d candidate(s), %d miner/steel excluded",
+             len(cands), sum(1 for s in cands if not s["not_commodity"]))
+
+
+def _fill_fundamentals(stocks: list[dict]) -> None:
+    """PHASE 1b2 — multi-year growth, FCF margin, net debt/EBITDA and next earnings
+    date (yfinance) for stocks that pass every other filter of some screen once the
+    forward PEG is in. Replaces trailing-12-month EPS growth, whose base effects let
+    cyclical recoveries and one-off earners through."""
+    cands = [s for s in stocks if _passes_except(s, {"not_commodity"} | _FUND_FIELDS)]
+    for i, s in enumerate(cands, 1):
+        s.update(est.fetch_fundamentals(s["ticker"]))
+        if i % 50 == 0:
+            log.info("fundamentals progress %d/%d", i, len(cands))
+    log.info("PHASE 1b2 fundamentals: %d candidate(s), 3-yr EPS growth for %d", len(cands),
+             sum(1 for s in cands if s.get("eps_growth_3y") is not None))
 
 
 def _fill_prices(buckets: dict[str, list[dict]]) -> None:
@@ -174,8 +217,7 @@ def _fill_sector(buckets: dict[str, list[dict]]) -> None:
     tickers = {r["ticker"] for rows in buckets.values() for r in rows}
     sector_by_ticker: dict[str, str | None] = {}
     for t in sorted(tickers):
-        p = fh.profile2(t)
-        sector_by_ticker[t] = sec.industry_to_sector((p or {}).get("finnhubIndustry"))
+        sector_by_ticker[t] = sec.industry_to_sector(_industry(t))
     rs = sec.sector_relative_strength()  # {sector: rs_3m}
     got = sum(1 for v in sector_by_ticker.values() if v is not None)
     for rows in buckets.values():
@@ -254,6 +296,8 @@ def run() -> dict:
     universe, t_universe = _timed(build_universe)
     stocks, t_metrics = _timed(_metrics, universe)
     _, t_forward = _timed(_fill_forward, stocks)
+    _, t_fund = _timed(_fill_fundamentals, stocks)
+    _, t_industry = _timed(_fill_industry, stocks)
     buckets, t_screen = _timed(_apply_screeners, stocks)
     _, t_prices = _timed(_fill_prices, buckets)
     _, t_atr = _timed(_fill_atr, buckets)
@@ -366,7 +410,7 @@ def run() -> dict:
         "twelvedata_ema_calls": qualifying if td_on else 0,
         "screener_counts": {k: len(v) for k, v in buckets.items()},
         "phase_seconds": {
-            "universe": t_universe, "metrics": t_metrics, "forward": t_forward, "screen": t_screen,
+            "universe": t_universe, "metrics": t_metrics, "forward": t_forward, "fundamentals": t_fund, "industry": t_industry, "screen": t_screen,
             "prices": t_prices, "atr": t_atr, "ema": t_ema, "sector": t_sector, "technicals": t_tech,
         },
     }

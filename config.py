@@ -21,7 +21,7 @@ from pathlib import Path
 
 # Bump on any change to the screener FILTERS, SCORING, or RISK GATE, so the
 # experiment can grade each version separately (the screener changes over time).
-SCREENER_VERSION = "v4-fwdpeg-2026-10"
+SCREENER_VERSION = "v5-3ygrowth-2026-10"
 
 # ── Finnhub ──────────────────────────────────────────────────────────────────
 FINNHUB_API_KEY = os.environ.get("FINNHUB_API_KEY", "")
@@ -63,7 +63,6 @@ SCREENERS = {
     "growth_tech": "Growth / Tech",
     "growth_tech_refined": "Growth / Tech Refined",
     "traditional_value": "Traditional / Asset-Heavy",
-    "momentum_breakout": "Momentum / Breakout",
 }
 
 

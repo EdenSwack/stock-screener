@@ -26,23 +26,29 @@ REQUIRED_METRIC_FIELDS = [
 SCREENER_FILTERS = {
     "growth_tech": [
         ("peg", lambda v: 0.5 <= v <= 1.5, "PEG 0.5–1.5"),
-        ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
+        ("eps_growth_3y", lambda v: v > 0.06, "3-yr EPS growth > 6%/yr"),
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
+        ("revenue_growth_3y", lambda v: v > 0.05, "3-yr revenue growth > 5%/yr"),
         ("ev_ebitda", lambda v: 0 < v <= 27, "EV/EBITDA ≤27 (positive)"),
-        ("fcf_growth", lambda v: v > 0.0, "FCF growth > 0%"),
+        ("fcf_margin", lambda v: v > 0.0, "FCF margin > 0"),
+        ("net_debt_ebitda", lambda v: v <= 3.0, "Net debt/EBITDA ≤ 3"),
         ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
+        ("not_commodity", lambda v: v is True, "Not a miner / steel maker"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
     "growth_tech_refined": [
         ("peg", lambda v: 0.5 <= v <= 1.0, "PEG 0.5–1"),
-        ("eps_growth", lambda v: v > 0.06, "EPS growth > 6%"),
+        ("eps_growth_3y", lambda v: v > 0.06, "3-yr EPS growth > 6%/yr"),
         ("revenue_growth", lambda v: v > 0.08, "Revenue growth > 8%"),
+        ("revenue_growth_3y", lambda v: v > 0.05, "3-yr revenue growth > 5%/yr"),
         ("ev_ebitda", lambda v: 0 < v <= 27, "EV/EBITDA ≤27 (positive)"),
-        ("fcf_growth", lambda v: v > 0.0, "FCF growth > 0%"),
+        ("fcf_margin", lambda v: v > 0.0, "FCF margin > 0"),
+        ("net_debt_ebitda", lambda v: v <= 3.0, "Net debt/EBITDA ≤ 3"),
         ("pb", lambda v: v < 9, "P/B < 9"),
         ("beta", lambda v: 0 <= v <= 1.5, "Beta 0–1.5"),
         ("pfcf", lambda v: 0 <= v <= 29, "P/FCF 0–29"),
         ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
+        ("not_commodity", lambda v: v is True, "Not a miner / steel maker"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
     # "Quality on sale" — reasonably-priced quality, not deep-value unicorns. The old
@@ -52,22 +58,15 @@ SCREENER_FILTERS = {
     "traditional_value": [
         ("market_cap", lambda v: v > 300, "Market cap > $300M"),
         ("peg", lambda v: v < 1.3, "PEG < 1.3"),
-        ("eps_growth", lambda v: v > 0.05, "EPS growth > 5%"),
+        ("eps_growth_3y", lambda v: v > 0.05, "3-yr EPS growth > 5%/yr"),
         ("revenue_growth", lambda v: v > 0.05, "Revenue growth > 5%"),
+        ("revenue_growth_3y", lambda v: v > 0.0, "3-yr revenue growth > 0"),
         ("pb", lambda v: 0 < v < 3.0, "P/B < 3 (positive)"),
         ("ev_ebitda", lambda v: 0 < v <= 14, "EV/EBITDA ≤14 (positive)"),
         ("roe", lambda v: v > 0.10, "ROE > 10%"),
         ("debt_equity", lambda v: v < 2.0, "Debt/Equity < 2"),
         ("beta", lambda v: 0 <= v <= 1.5, "Beta 0–1.5"),
         ("pfcf", lambda v: 0 <= v <= 20, "P/FCF 0–20"),
-        ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
-        ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
-    ],
-    "momentum_breakout": [
-        ("revenue_growth", lambda v: v > 0.20, "Revenue growth > 20%"),
-        ("eps_growth", lambda v: v > 0.15, "EPS growth > 15%"),
-        ("beta", lambda v: 1.0 <= v <= 2.0, "Beta 1.0–2.0"),
-        ("market_cap", lambda v: v > 500, "Market cap > $500M"),
         ("eps_growth_fwd", lambda v: v > 0.0, "Next-year EPS growth > 0"),
         ("nyse_or_nasdaq", lambda v: v is True, "NYSE/NASDAQ"),
     ],
@@ -227,7 +226,9 @@ def failed_filters(stock: dict, screener_key: str) -> list[str]:
     for field, check, label in SCREENER_FILTERS[screener_key]:
         val = stock.get(field)
         if val is None:
-            if field not in LENIENT_FIELDS:
+            # not_commodity is only looked up once everything else passes, so a None
+            # there means "not checked", not "is a miner".
+            if field not in LENIENT_FIELDS and field != "not_commodity":
                 out.append(label)
         elif not check(val):
             out.append(label)
@@ -246,7 +247,7 @@ WEIGHTS_70 = {  # growth_tech_refined, traditional_value
     "roe": 0.10,
     "beta": 0.10,
 }
-WEIGHTS_30 = {  # growth_tech, momentum_breakout
+WEIGHTS_30 = {  # growth_tech
     "revenue_growth": 0.30,
     "eps_growth": 0.25,
     "peg": 0.20,
@@ -257,7 +258,6 @@ INVERTED_FACTORS = {"peg", "beta"}
 
 BUCKET_WEIGHTS = {
     "growth_tech": WEIGHTS_30,
-    "momentum_breakout": WEIGHTS_30,
     "growth_tech_refined": WEIGHTS_70,
     "traditional_value": WEIGHTS_70,
 }
