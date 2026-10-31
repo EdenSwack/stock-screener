@@ -1,0 +1,25 @@
+name: Take-profit backtest
+
+on:
+  workflow_dispatch:          # manual only — read-only research, prints results to the log
+
+jobs:
+  backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backtest
+        run: python takeprofit_backtest.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FLEX_USER_ID: 452a15b2-1a36-4a2f-9a2b-cb615f7324fe
